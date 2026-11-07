@@ -149,3 +149,15 @@ def test_d5_valor_de_oferta_pelos_ativos_brutos_e_ponte_para_o_dono():
     assert r.ativos_mercado == pytest.approx(ativos)
     assert r.valor_oferta == pytest.approx(ativos) and r.valor_oferta_origem == "ativos a mercado"
     assert r.ponte_dono[-1] == ("= Sobra para o dono", pytest.approx(ativos - 150_000 - 400_000))
+
+
+def test_fluxo_negativo_conservador_e_o_pior_cenario():
+    dados = _dados()
+    dres = normalizar(dados)
+    for d in dres:
+        d.owner_earnings = -100_000
+    notas = propor_notas(dados, None, dres, dres[0])
+    r = avaliar(dados, dres, None, avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094), notas)
+    cons, base_c, otim = r.cenarios
+    assert r.fluxo_base < 0
+    assert cons.valor_patrimonio <= base_c.valor_patrimonio <= otim.valor_patrimonio

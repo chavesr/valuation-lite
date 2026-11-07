@@ -337,6 +337,37 @@ PESSOAL = r"SALARIO|ORDENADO|13. SALARIO|FERIAS|^INSS|^F\.?G\.?T\.?S|INDENIZ|AVI
 FINANCEIRAS = r"JUROS|IOF|VARIAC.*CAMBIA.*PASSIVA|COMISS.*BANCARIA|DESPESAS BANCARIAS|ENCARGOS FINANCEIROS"
 
 
+def _atividade_receita(raizes: list[Conta], idx: int) -> str | None:
+    """Atividade dominante pelos nomes das contas de receita (fabricação própria, serviços, revenda)."""
+    rb = _primeira(raizes, r"^RECEITA (OPERACIONAL )?BRUTA|^RECEITA OPERACIONAL$|^RECEITAS? DE VENDAS?|^RECEITAS?$")
+    if rb is None:
+        return None
+    soma = {"industria": 0.0, "servicos": 0.0, "comercio": 0.0}
+    for c in rb.percorrer():
+        if c.filhos or len(c.valores) <= abs(idx) and idx != -1:
+            continue
+        n, v = _n(c), abs(c.valores[idx])
+        if re.search(r"FABRICACAO|PRODUCAO PROPRIA|INDUSTRIALIZ|PRODUTOS? (PROPRIOS|ACABADOS)", n):
+            soma["industria"] += v
+        elif re.search(r"SERVICO|PRESTACAO", n):
+            soma["servicos"] += v
+        elif re.search(r"MERCADORIA|REVENDA", n):
+            soma["comercio"] += v
+    return max(soma, key=soma.get) if any(soma.values()) else None
+
+
+def _opex_sem_financeiras(raizes: list[Conta], idx: int) -> float | None:
+    """Grupo 'Despesas operacionais' inteiro, tirando despesas financeiras e IR que estejam dentro dele."""
+    grupo = _primeira(raizes, r"^DESPESAS OPERACIONAIS|^DESPESAS E CUSTOS OPERACIONAIS")
+    if grupo is None or len(grupo.valores) <= abs(idx) and idx != -1:
+        return None
+    total = grupo.valores[idx]
+    fin = [c for c in grupo.percorrer() if c is not grupo and re.search(r"^DESPESAS? FINANCEIRAS?|^RECEITAS? FINANCEIRAS?", _n(c))]
+    if not fin:
+        fin = [c for c in grupo.percorrer() if not c.filhos and re.search(FINANCEIRAS, _n(c))]
+    return round(total - sum(c.valores[idx] for c in fin), 2)
+
+
 def mapear_dre(raizes: list[Conta], idx: int) -> dict:
     receitas_fin = _primeira(raizes, r"^RECEITAS? FINANCEIRAS?")
     despesas_fin = _primeira(raizes, r"^DESPESAS? FINANCEIRAS?")
@@ -355,6 +386,8 @@ def mapear_dre(raizes: list[Conta], idx: int) -> dict:
     fin_ops = _soma([c for c in _folhas(operacionais, FINANCEIRAS) if len(c.valores) > abs(idx) or idx == -1], idx)
     return {
         "financeiras_nas_operacionais": fin_ops,
+        "despesas_operacionais_total": _opex_sem_financeiras(raizes, idx),
+        "atividade_receita": _atividade_receita(raizes, idx),
         "receita_bruta": _valor(_primeira(raizes, r"^RECEITA (OPERACIONAL )?BRUTA|^RECEITA OPERACIONAL$|^RECEITAS? DE VENDAS?$"), idx),
         "deducoes": _valor(_primeira(raizes, r"^DEDUC"), idx),
         "receita_liquida": _valor(_primeira(raizes, r"^RECEITA (OPERACIONAL )?LIQUIDA"), idx),

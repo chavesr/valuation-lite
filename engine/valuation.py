@@ -270,8 +270,9 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                            retencao_sugerida=round(sum(c.retencao for c in conts), 2))
     ativos_liquidos = liquidacao_operacional or 0.0  # valor terminal (firma) no cenário base/otimista
     mult_vt = p["valor_terminal"]["multiplo_do_fluxo"]
-    for nome, dtaxa, g in (("conservador", t["conservador"], cr["conservador"]),
-                           ("base", 0.0, g_base), ("otimista", t["otimista"], g_otim)):
+    sinal = 1 if fluxo > 0 else -1  # com fluxo negativo, taxa maior daria valor menos negativo: inverte
+    for nome, dtaxa, g in (("conservador", sinal * t["conservador"], cr["conservador"]),
+                           ("base", 0.0, g_base), ("otimista", sinal * t["otimista"], g_otim)):
         taxa = round(min(max(risco.taxa_desconto + dtaxa, TAXA_MIN), TAXA_MAX), 4)
         fluxo_final = fluxo * (1 + g) ** risco.horizonte_anos
         terminal = max(mult_vt[nome] * fluxo_final, ativos_liquidos)  # empresa em funcionamento ou liquidação

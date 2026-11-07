@@ -104,6 +104,9 @@ def atividade_evidenciada(dados) -> Atividade | None:
     revenda = sum(v for e in efd for c, v in e.por_cfop.items() if c[1:] in {"102", "106", "108", "403", "405"})
     if prod or revenda:
         return "industria" if prod >= revenda else "comercio"
+    dres = [x for x in (getattr(dados, "dres", None) or []) if getattr(x, "atividade_receita", None)]
+    if dres:  # nomes das contas de receita da DRE contábil mais recente
+        return max(dres, key=lambda x: (x.exercicio, x.meses)).atividade_receita
     return None
 
 
@@ -158,9 +161,17 @@ def _pro_labore_mercado(receita_anual: float, p: dict) -> float:
 def _carga_comprador(receita: float, atividade: Atividade, dados, p: dict) -> tuple[str, float, float]:
     """→ (regime, tributos sobre a receita, IR/CS)."""
     if receita <= p["simples"]["limite_receita"]:
-        aliq = (getattr(dados, "simples", None) or {}).get("aliquota_efetiva") or \
-            p["simples"]["aliquota_efetiva_padrao"][atividade]
-        return f"Simples (alíquota efetiva {aliq:.1%})", round(receita * aliq, 2), 0.0
+        aliq = (getattr(dados, "simples", None) or {}).get("aliquota_efetiva")
+        fonte = "PGDAS-D"
+        if not aliq:  # sem PGDAS: a carga que a própria DRE contábil mostra (Simples ÷ receita bruta)
+            contabeis = [x for x in (getattr(dados, "dres", None) or []) if x.receita_bruta and x.deducoes
+                         and 0.02 <= abs(x.deducoes) / x.receita_bruta <= 0.25]
+            if contabeis:
+                x = max(contabeis, key=lambda x: (x.exercicio, x.meses))
+                aliq, fonte = abs(x.deducoes) / x.receita_bruta, f"deduções da DRE contábil {x.exercicio}"
+        if not aliq:
+            aliq, fonte = p["simples"]["aliquota_efetiva_padrao"][atividade], "tabela padrão"
+        return f"Simples (alíquota efetiva {aliq:.1%}, {fonte})", round(receita * aliq, 2), 0.0
     lp = p["lucro_presumido"]
     return ("Lucro Presumido", round(receita * (lp["pis_cofins_cumulativo"] + lp["icms_iss_sobre_receita"][atividade]), 2),
             round(receita * lp["irpj_csll_sobre_receita"][atividade], 2))
@@ -313,9 +324,19 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
                   f"{nome_estr}: CMV de {abs(estrutura.custo_vendas) / base_estr:.1%} da receita aplicado à receita econômica")
         pessoal = (estrutura.despesas_pessoal or 0) * escala
         linha("Despesas com pessoal", pessoal, nome_estr)
-        conhecidas = sum(x or 0 for x in (estrutura.despesas_pessoal, estrutura.pro_labore,
-                                           estrutura.depreciacao_amortizacao, estrutura.financeiras_nas_operacionais))
-        outras = ((estrutura.despesas_administrativas or 0) + (estrutura.despesas_comerciais or 0) - conhecidas) * escala
+        total_op = getattr(estrutura, "despesas_operacionais_total", None)
+        if total_op is not None:  # grupo inteiro (sem financeiras): pessoal e materiais podem estar fora das adm.
+            conhecidas = sum(x or 0 for x in (estrutura.despesas_pessoal, estrutura.pro_labore,
+                                               estrutura.depreciacao_amortizacao))
+            outras = (total_op - conhecidas) * escala
+        else:
+            conhecidas = sum(x or 0 for x in (estrutura.despesas_pessoal, estrutura.pro_labore,
+                                               estrutura.depreciacao_amortizacao, estrutura.financeiras_nas_operacionais))
+            outras = ((estrutura.despesas_administrativas or 0) + (estrutura.despesas_comerciais or 0) - conhecidas) * escala
+        if outras > 0:  # despesa positiva não existe: o pessoal estava fora do grupo administrativo
+            d.alertas.append(f"{nome_estr}: pessoal lançado fora das despesas administrativas — 'outras despesas' "
+                             "zeradas; conferir se há despesas operacionais não captadas.")
+            outras = 0.0
         linha("Despesas administrativas e comerciais", outras,
               f"{nome_estr} (sem pessoal, pró-labore, depreciação e juros/IOF)")
         pro_lab_atual = -(estrutura.pro_labore or 0) / estrutura.meses * 12
@@ -385,6 +406,13 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
             if dec.get("valor") is not None:
                 a.valor = float(dec["valor"])
             a.nota = dec.get("nota")
+
+    pessoal_total = abs(d.valor("Despesas com pessoal"))
+    if receita > 0 and pessoal_total > receita:
+        d.alertas.append(f"Receita usada (R$ {brl(receita, 0)}) menor que só a despesa de pessoal "
+                         f"(R$ {brl(pessoal_total, 0)}): a receita é incompatível com a estrutura de custos — "
+                         "provável receita fora dos livros; não usar este período como base sem extratos/PGDAS.")
+        d.confianca = "baixa"
 
     # ---- tributos do comprador: acima do limite do Simples, o menor entre Presumido e Real
     antes = sum(l.valor for l in d.linhas if l.conta != "Receita bruta") + \

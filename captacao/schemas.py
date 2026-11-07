@@ -145,6 +145,8 @@ class DREAnual(BaseModel):
     outras_receitas_despesas: float | None = None
     resultado_financeiro: float | None = None
     financeiras_nas_operacionais: float | None = None  # juros/IOF lançados dentro de adm./comerciais
+    despesas_operacionais_total: float | None = None  # grupo 'Despesas operacionais' inteiro, sem as financeiras
+    atividade_receita: str | None = None  # industria | comercio | servicos, pelo nome das contas de receita
     ir_csll: float | None = None
     lucro_liquido: float | None = None
     proveniencia: Proveniencia

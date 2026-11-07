@@ -85,3 +85,35 @@ class Qualitativo(BaseModel):
         if faltam:
             raise ValueError(f"notas_score sem as dimensões: {', '.join(sorted(faltam))}")
         return v
+
+
+# --------------------------------------------------------------------------- F7 (revisor)
+
+Fase = Literal["captacao", "normalizacao", "qualitativo", "valuation", "finalidade"]
+
+
+class AlertaRevisao(BaseModel):
+    id: str = Field(pattern=r"^[a-z0-9_]{3,60}$", description="snake_case estável, para registrar a decisão")
+    fase: Fase
+    severidade: Nivel
+    achado: str = Field(min_length=10)
+    evidencia: str = Field(min_length=5)
+    sugestao: str = Field(min_length=5, description="o que fazer e onde (arquivo de decisão ou documento a pedir)")
+
+
+class Revisao(BaseModel):
+    """revisao.json — saída da F7 (revisor cético)."""
+
+    case_id: str
+    parecer: Literal["aprovado", "aprovado_com_ressalvas", "refazer"]
+    resumo: str = Field(description="2 a 4 frases: o valuation se sustenta? o que mais pesa?")
+    alertas: list[AlertaRevisao] = Field(default_factory=list)
+    perguntas_ao_dono: list[str] = Field(default_factory=list)
+
+    @field_validator("alertas")
+    @classmethod
+    def _ids_unicos(cls, v: list[AlertaRevisao]) -> list[AlertaRevisao]:
+        ids = [a.id for a in v]
+        if len(ids) != len(set(ids)):
+            raise ValueError("alertas com id repetido")
+        return v

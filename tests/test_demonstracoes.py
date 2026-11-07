@@ -239,3 +239,34 @@ def test_balanco_resumido_usa_direitos_realizaveis_como_recebiveis():
         "10 02 PASSIVO 900,00C", "11 02.1 PASSIVO CIRCULANTE 300,00C", "12 02.1.1 FORNECEDORES 300,00C",
         "13 02.3 PATRIMÔNIO LÍQUIDO 600,00C", "14 02.3.1 CAPITAL 600,00C"]))
     assert bp.balancos[0].contas_receber == 800 and bp.balancos[0].estoques is None
+
+
+def test_atividade_pela_receita_e_despesas_operacionais_totais():
+    from captacao.parsers.demonstracoes_pdf import ler_demonstracao
+
+    doc = ler_demonstracao("dre_hotel.pdf", _linhas([
+        "999 - EMPRESA FICTICIA Página: 1", "Contabilidade DRE Data: 01/02/2026", "Período: 01/2025 a 12/2025",
+        (40, "RECEITA OPERACIONAL BRUTA 1.000.000,00"), (60, "Venda a Vista de Serviços 900.000,00"),
+        (60, "Vendas de Mercadorias a Vista 100.000,00"),
+        (40, "DEDUÇÕES DA RECEITA BRUTA 60.000,00"), (60, "Imposto Simples 60.000,00"),
+        (40, "RECEITA LÍQUIDA 940.000,00"), (40, "CUSTOS 100.000,00"), (60, "Compras de Mercadorias 100.000,00"),
+        (40, "LUCRO BRUTO 840.000,00"), (40, "DESPESAS OPERACIONAIS 500.000,00"),
+        (60, "DESPESAS ADMINISTRATIVAS 300.000,00"), (80, "Salarios e Ordenados 300.000,00"),
+        (60, "F.G.T.S. 24.000,00"), (60, "MATERIAIS 150.000,00"), (60, "DESPESAS FINANCEIRAS 26.000,00"),
+        (40, "LUCRO LÍQUIDO DO EXERCÍCIO 340.000,00")]))
+    d = doc.dres[0]
+    assert d.atividade_receita == "servicos"
+    assert d.despesas_operacionais_total == -474_000  # 500 mil do grupo − 26 mil de financeiras
+    assert d.despesas_pessoal == -324_000  # salários + FGTS, mesmo com o FGTS fora das administrativas
+
+
+def test_atividade_industria_pela_fabricacao_propria():
+    from captacao.parsers.demonstracoes_pdf import ler_demonstracao
+
+    doc = ler_demonstracao("dre_ind.pdf", _linhas([
+        "EMPRESA FICTICIA LTDA Página: 1", "Demonstração do Resultado de 01/01/2025 a 31/12/2025",
+        "1 01 RECEITAS 1.000.000,00C", "2 01.1 RECEITA OPERACIONAL BRUTA 1.000.000,00C",
+        "3 01.1.01 Venda de Prod. Fabricação Própria 990.000,00C", "4 01.1.02 Vendas de Mercadorias 10.000,00C",
+        "14 02 DEDUÇÕES DAS RECEITAS 100.000,00D", "15 02.1 Simples Nacional 100.000,00D",
+        "20 03 RECEITA LÍQUIDA 900.000,00C", "30 04 CUSTOS 400.000,00D", "31 04.1 CUSTO DOS PRODUTOS 400.000,00D"]))
+    assert doc.dres[0].atividade_receita == "industria"

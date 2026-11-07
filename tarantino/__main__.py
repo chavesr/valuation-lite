@@ -3,6 +3,7 @@
     python -m tarantino abrir "<pasta da empresa>" [--fim 2026-10] [--meses 24] [--cnpj ...]
     python -m tarantino qualitativo "<pasta>" [--modo claude-code|manual] [--importar]
     python -m tarantino calibrar "<pasta de trabalho>" [--so R1 R2]
+    python -m tarantino revisar "<pasta>" [--modo claude-code|manual] [--importar] [--forcar]
     python -m tarantino finalidade "<pasta>" [--tipo entrada_socio] [--percentual 0.3] [--aporte ...] [--pedido ...]
     python -m tarantino mercado [--forcar]
     python -m tarantino status "<pasta da empresa>"
@@ -121,6 +122,36 @@ def cmd_mercado(args: argparse.Namespace) -> None:
         print(f"  ! {a}")
 
 
+def cmd_revisar(args: argparse.Namespace) -> None:
+    from julgamento.executor import ErroJulgamento
+    from tarantino.revisao import importar_f7, pendentes_graves, rodar_f7
+
+    try:
+        if args.importar:
+            r, reaproveitada = importar_f7(args.pasta), False
+        else:
+            r, reaproveitada = rodar_f7(args.pasta, modo=args.modo, modelo=args.modelo, forcar=args.forcar)
+    except ErroJulgamento as erro:
+        sys.exit(f"F7: {erro}")
+    if not hasattr(r, "parecer"):
+        print(f"Pacote da F7 gravado em: {r}")
+        print(f"Peça ao Claude Code: 'leia esse arquivo e grave a resposta em {PASTA_SAIDA}/f7_saida.json'. "
+              f"Depois rode: python -m tarantino revisar \"{args.pasta}\" --importar")
+        return
+    if reaproveitada:
+        print("Nada mudou desde a última revisão: resposta reaproveitada (sem nova chamada ao agente).")
+    rot = {"aprovado": "APROVADO", "aprovado_com_ressalvas": "APROVADO COM RESSALVAS", "refazer": "REFAZER"}
+    print(f"F7 · parecer {rot[r.parecer]} · {len(r.alertas)} alerta(s)")
+    for a in r.alertas:
+        print(f"  [{a.severidade:5}] {a.fase:12} {a.id}")
+    from pathlib import Path
+
+    graves = pendentes_graves(Path(args.pasta) / PASTA_SAIDA)
+    if graves:
+        print(f"⚠ {len(graves)} alerta(s) grave(s) sem decisão: decida em {PASTA_SAIDA}/revisao_decisoes.json")
+    print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/revisao.md")
+
+
 def cmd_finalidade(args: argparse.Namespace) -> None:
     from pathlib import Path
 
@@ -174,6 +205,13 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--mapa", help="JSON caso → pasta (padrão: cases/calibracao.json)")
     c.add_argument("--so", nargs="*", help="rodar só estes casos (ex.: R1 R2)")
     c.set_defaults(func=cmd_calibrar)
+    rv = sub.add_parser("revisar", help="F7: revisão cética pelo agente (rodar depois de 'avaliar')")
+    rv.add_argument("pasta")
+    rv.add_argument("--modo", choices=["claude-code", "manual", "api"], default="claude-code")
+    rv.add_argument("--modelo", help="modelo do Claude Code (padrão: o da conta)")
+    rv.add_argument("--importar", action="store_true", help="só valida e importa _valuation/f7_saida.json")
+    rv.add_argument("--forcar", action="store_true", help="roda o agente mesmo se nada mudou")
+    rv.set_defaults(func=cmd_revisar)
     f = sub.add_parser("finalidade", help="D7: venda total/parcial ou entrada de sócio, % das cotas, aporte, pedido")
     f.add_argument("pasta")
     f.add_argument("--tipo", choices=["venda_total", "venda_parcial", "entrada_socio"])
