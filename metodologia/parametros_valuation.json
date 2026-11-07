@@ -1,0 +1,82 @@
+{
+  "_leia": "Parâmetros da F6 (valuation). Valores iniciais A CALIBRAR pela Nova Direção.",
+  "taxa_desconto": {
+    "origem": "validado em 06/11/2026: empresas entre 20% e 35% a.a.",
+    "minima": 0.2,
+    "maxima": 0.35,
+    "premio_minimo_sobre_selic": 0.05,
+    "_nota": "taxa = mínima + (máxima − mínima) × Score/100; piso Selic + prêmio mínimo"
+  },
+  "selic_padrao": {
+    "valor": 0.1375,
+    "data": "2026-11-06",
+    "_nota": "usada só se a consulta ao Banco Central falhar"
+  },
+  "lucro_sustentavel": {
+    "origem": "validado em 06/11/2026: média dos períodos (até 3), nunca acima do mais recente",
+    "periodos_media": 3,
+    "excluir_confianca_baixa_se_houver_outros": true
+  },
+  "crescimento": {
+    "origem": "a calibrar: crescimento real da receita usado nas projeções (cenário base = metade do histórico, com teto)",
+    "conservador": 0.0,
+    "base_fracao_do_historico": 0.5,
+    "base_teto": 0.05,
+    "otimista_teto": 0.1,
+    "perpetuidade": 0.03
+  },
+  "teste_perpetuidade": {
+    "origem": "a calibrar: critérios mínimos (todos exigidos, além de score ≤ 30)",
+    "receita_recorrente_minima": 0.5,
+    "anos_de_mercado_minimo": 10,
+    "maior_cliente_maximo": 0.15,
+    "gci_niveis": [
+      "A",
+      "B"
+    ],
+    "dependencia_dono_nota_maxima": 2
+  },
+  "piso_patrimonial": {
+    "origem": "a calibrar: % do valor contábil realizável numa liquidação ordenada",
+    "caixa": 1.0,
+    "contas_receber": 0.8,
+    "estoques": 0.5,
+    "imobilizado": 0.4
+  },
+  "contingencias": {
+    "origem": "a calibrar: probabilidade de materialização × anos considerados",
+    "receita_nao_declarada": {
+      "anos": 5,
+      "probabilidade": 0.3,
+      "_nota": "tributos sobre a receita não declarada (alíquota do regime atual)"
+    },
+    "pj": {
+      "anos": 2,
+      "probabilidade": 0.3,
+      "_nota": "encargos de vínculo de emprego sobre o custo PJ"
+    }
+  },
+  "multiplos_referencia_ev_ebitda": {
+    "origem": "a calibrar: faixa de mercado para PMEs (só checagem)",
+    "min": 3.0,
+    "max": 5.0
+  },
+  "margem_de_seguranca": {
+    "origem": "a calibrar: desconto sobre o valor base para o preço recomendado",
+    "percentual": 0.25
+  },
+  "cenarios_taxa": {
+    "conservador": 0.03,
+    "otimista": -0.03,
+    "_nota": "pontos percentuais somados à taxa do Score, limitados à faixa da taxa_desconto"
+  },
+  "valor_terminal": {
+    "origem": "validado em 06/11/2026 (opção b): empresa em funcionamento ao fim do horizonte; múltiplos a calibrar",
+    "multiplo_do_fluxo": {
+      "conservador": 1.5,
+      "base": 2.5,
+      "otimista": 3.0
+    },
+    "_nota": "valor terminal = múltiplo × fluxo do último ano projetado, nunca abaixo da liquidação dos ativos operacionais"
+  }
+}

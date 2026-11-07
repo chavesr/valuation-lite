@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# dados de clientes e saídas de cases nunca vão para o repositório
+cases/
+_valuation/
+market_data/cache/
+*.ofx
+*.pdf
+*.xlsx
+*.xls
+*.zip

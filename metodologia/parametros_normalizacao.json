@@ -1,0 +1,79 @@
+{
+  "_leia": "Parâmetros da F4 (normalização). Alterar aqui muda todos os cases. 'validado' = aprovado pela Nova Direção em 06/11/2026.",
+  "pro_labore_mercado": {
+    "origem": "validado: salário mensal de um gestor contratado para tocar uma PME do porte, contratado como PJ",
+    "faixas_receita_anual": [
+      {
+        "ate": 3000000,
+        "mensal": 12000
+      },
+      {
+        "ate": 6000000,
+        "mensal": 18000
+      },
+      {
+        "ate": 10000000,
+        "mensal": 25000
+      },
+      {
+        "ate": null,
+        "mensal": 35000
+      }
+    ],
+    "meses_por_ano": 12,
+    "encargos": 0.0,
+    "_nota": "gestor de alto escalão contratado como PJ: 12 parcelas, sem 13º, férias ou encargos"
+  },
+  "simples": {
+    "limite_receita": 4800000,
+    "_nota": "Dentro do limite, o comprador mantém o Simples: usa-se a alíquota efetiva do PGDAS mais recente (ou a da tabela abaixo)",
+    "aliquota_efetiva_padrao": {
+      "industria": 0.1,
+      "comercio": 0.09,
+      "servicos": 0.13
+    }
+  },
+  "lucro_presumido": {
+    "origem": "validado (conferir ICMS efetivo com o contador de cada case)",
+    "pis_cofins_cumulativo": 0.0365,
+    "icms_iss_sobre_receita": {
+      "industria": 0.09,
+      "comercio": 0.07,
+      "servicos": 0.05
+    },
+    "irpj_csll_sobre_receita": {
+      "industria": 0.0308,
+      "comercio": 0.0308,
+      "servicos": 0.1088
+    },
+    "_nota": "receita: PIS 0,65% + COFINS 3% + ICMS (ind./com.) ou ISS (serv.); IR/CS: presunção 8%/12% (ind./com.) e 32% (serv.) × (IRPJ 15% + adicional 10% + CSLL 9%)"
+  },
+  "lucro_real": {
+    "origem": "a calibrar com o contador: aproximação para comparar com o Presumido",
+    "pis_cofins_nao_cumulativo": 0.0925,
+    "creditos_pis_cofins_sobre": {
+      "custo_vendas": 1.0,
+      "outras_despesas": 0.5
+    },
+    "irpj": 0.15,
+    "adicional_irpj": 0.1,
+    "limite_adicional_anual": 240000,
+    "csll": 0.09,
+    "_nota": "ICMS/ISS igual ao do Presumido; PIS/COFINS 9,25% com crédito sobre o CMV e metade das demais despesas (energia, fretes, aluguel PJ…); IRPJ/CSLL sobre o lucro antes do IR (zero se prejuízo)"
+  },
+  "encargos_pj_para_clt": {
+    "origem": "validado: custo adicional se o PJ que exerce função de empregado for registrado",
+    "percentual": 0.5
+  },
+  "receita": {
+    "origem": "validado",
+    "cobertura_minima_caixa": 0.75,
+    "_nota_cobertura": "fração dos meses do período com extrato para o caixa servir de prova da receita",
+    "confirmacao_gerencial_pelo_caixa": 0.9,
+    "_nota_confirmacao": "o caixa precisa cobrir ao menos 90% da receita gerencial para ela virar a receita econômica",
+    "acima_da_declarada_relevante": 0.05
+  },
+  "capex_manutencao": {
+    "_nota": "validado em 06/11/2026: questionário Q28 (capex de manutenção informado pelo dono); senão a depreciação da DRE contábil (do período ou a mais recente). Investimentos da planilha gerencial não entram (misturam expansão)."
+  }
+}
