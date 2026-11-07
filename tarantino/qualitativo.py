@@ -187,7 +187,35 @@ def _md(empresa: str, q: Qualitativo) -> str:
     l += ["", "## Pontos fortes", *[f"- {x}" for x in q.pontos_fortes]]
     l += ["", "## Perguntas para a entrevista", *[f"{i}. {x}" for i, x in enumerate(q.perguntas_entrevista, 1)]]
     l += ["", "## Lacunas de informação", *[f"- {x}" for x in q.lacunas_informacao]]
+    if q.funcoes_do_dono:
+        l += ["", "## Funções do dono a substituir (custo proposto em ajustes_decisoes.json)",
+              *[f"- **{f.eixo}**: {f.descricao} — {f.evidencia}" for f in q.funcoes_do_dono]]
     return "\n".join(l)
+
+
+def propor_custos_substituicao(saida: Path, q: Qualitativo) -> int:
+    """D1: cada função do dono sem substituto vira ajuste de julgamento proposto (Checkpoint 2). Decisões já
+    tomadas pelo analista não são tocadas; propostas antigas que a F5 não repetiu saem se ainda pendentes."""
+    from engine.normalizacao import carregar_parametros
+
+    p = carregar_parametros()
+    cfg, enc = p["custo_substituicao_dono"], p["encargos_pj_para_clt"]["percentual"]
+    arq = saida / "ajustes_decisoes.json"
+    decisoes = json.loads(arq.read_text(encoding="utf-8")) if arq.exists() else {}
+    novos = {f"substituicao_{f.eixo}": f for f in q.funcoes_do_dono}
+    for k in [k for k, v in decisoes.items() if k.startswith("substituicao_") and k not in novos
+              and v.get("aprovado") is None]:
+        del decisoes[k]
+    for k, f in novos.items():
+        anual = cfg["mensal"][f.eixo] * cfg["meses_por_ano"] * (1 + enc)
+        atual = decisoes.get(k, {})
+        if atual.get("aprovado") is not None:
+            continue
+        decisoes[k] = {"descricao": f"Custo de substituir o dono na função {f.eixo}: {f.descricao}",
+                       "valor_proposto": round(-anual, 2), "aprovado": None, "valor": None, "nota": None,
+                       "origem": "F5", "evidencia": f.evidencia}
+    arq.write_text(json.dumps(decisoes, indent=2, ensure_ascii=False), encoding="utf-8")
+    return len(novos)
 
 
 def importar_f5(pasta_empresa: str | Path) -> Qualitativo:
@@ -201,6 +229,7 @@ def importar_f5(pasta_empresa: str | Path) -> Qualitativo:
     bruto = json.loads(arq.read_text(encoding="utf-8"))
     q = Qualitativo.model_validate({**bruto, "case_id": estado.id})
     (saida / "qualitativo.json").write_text(q.model_dump_json(indent=2), encoding="utf-8")
+    propor_custos_substituicao(saida, q)
     (saida / "qualitativo.md").write_text(_md(estado.empresa, q), encoding="utf-8")
     notas = ", ".join(f"{n.dimensao} {n.nota}" for n in q.notas_score)
     estado.registrar("F5", "qualitativo", f"fosso {q.fosso.forca}; {len(q.riscos)} risco(s); notas propostas: {notas}")

@@ -11,6 +11,7 @@ Sua tarefa é a **análise qualitativa (F5)** do case abaixo. Os números já fo
 6. Escreva em português, de forma direta e sem jargão. O `resumo` deve ter de 3 a 6 frases e vai para o relatório do cliente.
 7. As `perguntas_entrevista` devem ser específicas para este case, nunca genéricas, e apontar o que mais mudaria o valuation.
 8. Calibre-se pelos **casos de referência** da ND: um case parecido deve receber notas parecidas, pelas mesmas razões. Siga as tabelas de nota do playbook geral.
+9. Em `funcoes_do_dono`, liste cada função (comercial, técnico, financeiro) que o dono exerce **sem substituto** e que o comprador terá de contratar, com a evidência. **Não inclua a gestão geral**: o pró-labore de mercado de um gestor contratado já está na DRE econômica. Não liste função já coberta por alguém da equipe com autonomia. Siga a regra de custo de substituição do playbook geral (o gestor contratado acumula o comercial; quem já faz ou pode assumir a função elimina o custo). Se os documentos não disserem se há alguém, proponha e inclua a pergunta em `perguntas_entrevista`. Cada item vira um custo proposto na DRE (o analista aprova).
 
 ## Dimensões de julgamento
 - `dependencia_dono`: a empresa funciona sem o dono? Considere quem vende, quem compra, quem detém o relacionamento e o conhecimento técnico, e se existe gerente com autonomia.

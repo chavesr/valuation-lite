@@ -75,5 +75,15 @@
   },
   "capex_manutencao": {
     "_nota": "validado em 06/11/2026: questionário Q28 (capex de manutenção informado pelo dono); senão a depreciação da DRE contábil (do período ou a mais recente). Investimentos da planilha gerencial não entram (misturam expansão)."
+  },
+  "custo_substituicao_dono": {
+    "origem": "validado 07/11/2026: salário mensal de mercado (CLT) de quem assume cada função que o dono exerce além da gestão geral; a gestão geral (com o comercial principal) já é o pró-labore de mercado",
+    "mensal": {
+      "comercial": 8000,
+      "tecnico": 8000,
+      "financeiro": 6000
+    },
+    "meses_por_ano": 12,
+    "_nota": "custo anual = mensal × 12 × (1 + encargos_pj_para_clt); entra como ajuste de julgamento proposto pela F5"
   }
 }

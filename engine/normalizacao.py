@@ -373,9 +373,14 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
         d.ajustes.append(Ajuste(id="encargos_pj", tipo="julgamento", confianca="baixa",
                                 descricao=f"Encargos se os PJ (R$ {brl(pj_total, 0)}/mês) forem registrados como CLT ({enc:.0%})",
                                 valor=round(-pj_total * 12 * enc / fator, 2), fonte="planilha de colaboradores PJ"))
+    for k, dec in sorted(decisoes.items()):  # D1: funções do dono sem substituto, propostas pela F5
+        if k.startswith("substituicao_") and dec.get("valor_proposto") is not None:
+            d.ajustes.append(Ajuste(id=k, tipo="julgamento", confianca="media", descricao=dec["descricao"],
+                                    valor=round(dec["valor_proposto"] / fator, 2),
+                                    fonte=f"F5 — {dec.get('evidencia') or 'funções do dono'}"))
     for a in d.ajustes:  # decisões do analista (Checkpoint 2)
         dec = decisoes.get(a.id)
-        if dec:
+        if dec and dec.get("aprovado") is not None:  # null = ainda pendente: continua "proposto"
             a.status = "aprovado" if dec.get("aprovado") else "rejeitado"
             if dec.get("valor") is not None:
                 a.valor = float(dec["valor"])

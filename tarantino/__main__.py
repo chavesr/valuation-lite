@@ -72,6 +72,10 @@ def cmd_qualitativo(args: argparse.Namespace) -> None:
     print(f"F5 · fosso {r.fosso.forca} · {len(r.riscos)} risco(s) · {len(r.perguntas_entrevista)} pergunta(s) para a entrevista")
     for n in r.notas_score:
         print(f"  {n.dimensao:28} nota {n.nota} ({n.confianca})")
+    if r.funcoes_do_dono:
+        eixos = ", ".join(f.eixo for f in r.funcoes_do_dono)
+        print(f"Funções do dono sem substituto ({eixos}): custo proposto em {PASTA_SAIDA}/ajustes_decisoes.json — "
+              "aprove/rejeite e rode 'normalizar' de novo antes de 'avaliar'.")
     print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/qualitativo.md · rode 'avaliar' para levar as notas ao Score")
 
 

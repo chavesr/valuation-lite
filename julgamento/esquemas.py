@@ -42,6 +42,14 @@ class Gestao(BaseModel):
     pontos_atencao: list[str] = Field(default_factory=list)
 
 
+class FuncaoDono(BaseModel):
+    """Função que o dono exerce sem substituto (além da gestão geral) e que o comprador terá de contratar."""
+
+    eixo: Literal["comercial", "tecnico", "financeiro"]
+    descricao: str = Field(description="o que o dono faz nesse eixo")
+    evidencia: str
+
+
 class Qualitativo(BaseModel):
     """qualitativo.json — saída da F5 (analista fundamentalista)."""
 
@@ -56,6 +64,16 @@ class Qualitativo(BaseModel):
     pontos_fortes: list[str] = Field(default_factory=list)
     perguntas_entrevista: list[str] = Field(default_factory=list)
     lacunas_informacao: list[str] = Field(default_factory=list)
+    funcoes_do_dono: list[FuncaoDono] = Field(default_factory=list,
+                                              description="funções sem substituto além da gestão geral (D1)")
+
+    @field_validator("funcoes_do_dono")
+    @classmethod
+    def _um_por_eixo(cls, v: list[FuncaoDono]) -> list[FuncaoDono]:
+        eixos = [f.eixo for f in v]
+        if len(eixos) != len(set(eixos)):
+            raise ValueError("funcoes_do_dono com eixo repetido")
+        return v
 
     @field_validator("notas_score")
     @classmethod

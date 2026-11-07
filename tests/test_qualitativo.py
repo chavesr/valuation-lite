@@ -137,3 +137,42 @@ def test_comparar_concordancia():
     prop = {"R1": {**gab["R1"], "contingencias": gab["R1"]["contingencias"] + 2}}
     r = comparar(gab, prop)
     assert (r["notas"], r["exatas"], r["ate_1_ponto"], r["vies_medio"]) == (4, 3, 3, 0.5)
+
+
+def test_d1_funcoes_do_dono_viram_custo_proposto_e_entram_na_dre_quando_aprovadas(tmp_path):
+    pasta = _case_normalizado(tmp_path)
+    saida = pasta / "_valuation"
+    antes = {d["periodo"]: d["ebitda"] for d in json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))}
+    resp = _resposta()
+    resp["funcoes_do_dono"] = [{"eixo": "financeiro", "descricao": "o dono cuida de caixa e cobrança",
+                                "evidencia": "briefing: não há financeiro"}]
+    rodar_f5(pasta, executor=lambda p, modelo=None: json.dumps(resp))
+    dec = json.loads((saida / "ajustes_decisoes.json").read_text(encoding="utf-8"))
+    prop = dec["substituicao_financeiro"]
+    assert prop["aprovado"] is None and prop["valor_proposto"] == -6000 * 12 * 1.5 and prop["origem"] == "F5"
+
+    normalizar_case(pasta)  # proposto: ainda não muda o EBITDA
+    dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
+    assert {d["periodo"]: d["ebitda"] for d in dres} == antes
+    assert any(a["id"] == "substituicao_financeiro" and a["status"] == "proposto" for a in dres[0]["ajustes"])
+
+    dec["substituicao_financeiro"]["aprovado"] = True
+    (saida / "ajustes_decisoes.json").write_text(json.dumps(dec), encoding="utf-8")
+    for d in normalizar_case(pasta):
+        if d.meses == 12:
+            assert d.ebitda == pytest.approx(antes[d.periodo] - 108_000, abs=1)
+
+    resp["funcoes_do_dono"] = []  # nova rodada da F5 não repete: a decisão do analista é preservada
+    rodar_f5(pasta, executor=lambda p, modelo=None: json.dumps(resp))
+    dec = json.loads((saida / "ajustes_decisoes.json").read_text(encoding="utf-8"))
+    assert dec["substituicao_financeiro"]["aprovado"] is True
+
+
+def test_d1_eixo_repetido_e_rejeitado():
+    from julgamento.esquemas import Qualitativo
+
+    resp = _resposta()
+    resp["funcoes_do_dono"] = [{"eixo": "tecnico", "descricao": "a", "evidencia": "b"},
+                               {"eixo": "tecnico", "descricao": "c", "evidencia": "d"}]
+    with pytest.raises(ValidationError, match="eixo repetido"):
+        Qualitativo.model_validate(resp)

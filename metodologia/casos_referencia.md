@@ -14,7 +14,7 @@ Cinco valuations reais da ND, anonimizados (07/11/2026). As notas usam a escala 
 
 ## R2 — Indústria gráfica de etiquetas adesivas (receita ~R$ 2,8 mi, 6–7 empregados)
 - Contexto: venda total; dono único, 65 anos, sem sucessor; Simples, vai passar do sublimite.
-- **Dependência do dono 2**: dono concentra vendas e finanças → a ND lançou no EBITDA o custo de um gerente geral e de um analista financeiro.
+- **Dependência do dono 2**: dono concentra vendas e finanças → a ND lançou no EBITDA o custo de um gerente geral com perfil comercial (que assume as vendas) e de um analista financeiro — não de um vendedor à parte. Também não lançou técnico: embora o dono ainda fizesse a manutenção das impressoras, há um técnico de confiança dele que fica na operação (informação das visitas, não dos documentos).
 - **Recorrência 3**: 176 clientes recorrentes sem contrato; comodato de impressoras prende o cliente ao consumível.
 - **Contingências 3**: contingências possíveis e quantificáveis → retenção; receita parcial na PF do dono a incorporar antes do fechamento.
 - **Setor 2**: maior cliente com 26% da receita sem contrato longo; mercado sem crescimento; homologação no cliente é a barreira real, máquina não.

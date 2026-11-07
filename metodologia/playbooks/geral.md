@@ -17,6 +17,11 @@ Versão 0.2 (07/11/2026). Critérios extraídos de 5 relatórios da ND (casos de
 - Sem dono definido (associação, sociedade dispersa), olhe as **pessoas-chave**: honorários de coordenação com peso alto na despesa, um único vendedor.
 - Gerente contratado com rotina documentada e DRE comprovada são o que destrava múltiplo maior.
 - **Regra da casa (venda de controle): sem gerente com autonomia comprovada, a nota máxima é 2.** Equipe operacional, vendedores ou CRM não reduzem a dependência se as decisões, a precificação e os relacionamentos-chave continuam com o dono.
+- **Custo de substituição (lucro do dono não é lucro transferível).** O pró-labore de mercado já paga um **gestor geral com perfil comercial**: ele assume a gestão e o comercial principal (preço, grandes contas, relacionamento). Proponha função extra só quando o dono a exerce sem substituto e o gestor não a absorve:
+  - **financeiro**: o dono cuida de caixa, pagamentos, bancos e cobrança → analista financeiro (padrão da casa, R2);
+  - **técnico**: o dono é o especialista de produto, processo ou fórmula, ou faz pessoalmente a operação técnica crítica → técnico ou responsável técnico;
+  - **comercial**: só se o dono for vendedor de campo de uma carteira grande, que o gestor sozinho não atende.
+  - Antes de propor, verifique se alguém da equipe (ou de confiança do dono) já faz ou pode assumir a função — nesse caso não há custo (R2: técnico de confiança que fica). Se os documentos não disserem, proponha e coloque a pergunta em `perguntas_entrevista`.
 - Em **entrada de sócio minoritário** a nota **não muda** (mede o risco do negócio): se não há gerente com autonomia, continua no máximo 2. O que muda é o impacto no valor, menor porque o dono permanece — registre isso na justificativa e nos riscos, não na nota (caso R3).
 
 | Nota | Situação |
