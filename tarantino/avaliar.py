@@ -16,7 +16,7 @@ from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
 from engine.score_case import NotaDimensao, aplicar_qualitativo, propor_notas
 from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
-from market_data.selic import selic_atual
+from tarantino.mercado import DadoIndisponivel, obter_mercado, selic_por_horizonte
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
 
@@ -82,7 +82,8 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     return "\n".join(linhas)
 
 
-def avaliar_case(pasta_empresa: str | Path, selic: float | None = None) -> ResultadoValuation:
+def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
+                 atualizar_mercado: bool = False) -> ResultadoValuation:
     pasta = Path(pasta_empresa)
     saida = pasta / PASTA_SAIDA
     for nome in ("dados_brutos.json", "dre_economica.json"):
@@ -109,10 +110,17 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None) -> Resul
                          encoding="utf-8")
 
     fonte_selic = "informada"
+    ref: float | dict[int, float] = selic if selic is not None else 0.0
     if selic is None:
-        selic, data_selic, fonte_selic = selic_atual(p["selic_padrao"])
-        fonte_selic = f"{fonte_selic}, {data_selic}"
-    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic)
+        try:
+            painel = obter_mercado(pasta, atualizar_mercado)
+            ref, fontes = selic_por_horizonte(painel)
+        except DadoIndisponivel:
+            ref, fontes = p["selic_padrao"]["valor"], None
+            fonte_selic = "valor padrão dos parâmetros (sem Focus nem Selic meta)"
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, ref)
+    if selic is None and fontes:
+        fonte_selic = fontes[risco.horizonte_anos]
     arq_cont = saida / "contingencias_decisoes.json"
     dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont)

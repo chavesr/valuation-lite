@@ -39,10 +39,10 @@ def test_dados_brutos_serializa_em_json(tmp_path):
 
 
 @pytest.mark.parametrize("score,selic,taxa,premio", [
-    (0, 0.15, 0.20, 0.05),
-    (100, 0.15, 0.35, 0.20),
-    (50, 0.15, 0.275, 0.125),
-    (0, 0.18, 0.23, 0.05),  # piso: Selic + 5 p.p.
+    (0, 0.1094, 0.20, 0.0906),     # 10,94% + 5 p.p. = 15,9% → piso da casa 20%
+    (57.5, 0.1094, 0.2457, 0.1363),  # JB: 10,94% + 13,6 p.p. ≈ 24,4% (ND usou 24,44%)
+    (100, 0.1094, 0.3094, 0.20),
+    (100, 0.18, 0.35, 0.17),       # teto da casa 35%
 ])
 def test_taxa_desconto(score, selic, taxa, premio):
     assert taxa_desconto(score, selic) == (pytest.approx(taxa), pytest.approx(premio))
@@ -63,3 +63,11 @@ def test_sanidade_multiplo_e_nota_gci():
     assert (nota_gci(90), nota_gci(70), nota_gci(40)) == (5, 3, 1)
     assert nota_gci(68.9, "C") == 2  # caso Charlie: nível C impõe nota máxima
     assert nota_gci(80, "B") == 3
+
+
+def test_selic_por_horizonte_escolhe_a_media_do_horizonte_do_score():
+    ref = {3: 0.1125, 4: 0.1094, 5: 0.1075}
+    alto = avaliar_risco({d: 1 for d in PESOS}, selic=ref)   # Score 100 → 3 anos
+    baixo = avaliar_risco({d: 5 for d in PESOS}, selic=ref)  # Score 0 → 5 anos
+    assert (alto.horizonte_anos, alto.selic) == (3, 0.1125) and (baixo.horizonte_anos, baixo.selic) == (5, 0.1075)
+    assert alto.taxa_desconto == pytest.approx(0.1125 + 0.20)

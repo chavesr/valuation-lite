@@ -297,8 +297,9 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     pendentes = [n.dimensao for n in notas.values() if n.pendente]
     if pendentes:
         notas_num = {k: v.nota for k, v in notas.items()}
-        otim = avaliar_risco({**notas_num, **{k: 5 for k in pendentes}}, risco.selic)
-        pess = avaliar_risco({**notas_num, **{k: 1 for k in pendentes}}, risco.selic)
+        ref = risco.selic_por_horizonte or risco.selic
+        otim = avaliar_risco({**notas_num, **{k: 5 for k in pendentes}}, ref)
+        pess = avaliar_risco({**notas_num, **{k: 1 for k in pendentes}}, ref)
         r.taxa_provisoria = {"minima": otim.taxa_desconto, "maxima": pess.taxa_desconto}
     if pendentes:
         r.alertas.append(f"{len(pendentes)} nota(s) do Score com padrão conservador ou aguardando o analista: "

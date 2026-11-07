@@ -1,6 +1,7 @@
 """Score de Risco do Negócio → taxa de desconto (Selic + prêmio) e horizonte do DCF.
 
-Metodologia da boutique: taxa total entre 20% e 35% a.a. (metodologia/parametros_valuation.json);
+Metodologia da boutique: taxa = Selic de referência (Focus) + prêmio pelo Score, entre 20% e 35% a.a.
+(metodologia/parametros_valuation.json);
 horizonte de 3 a 5 anos.
 Notas por dimensão na escala da ND: 5 = melhor (risco mínimo) ... 1 = pior (risco máximo).
 O Score continua sendo de risco: 0 = menor risco, 100 = maior risco.
@@ -30,12 +31,12 @@ def _faixa_taxa() -> tuple[float, float, float]:
     arq = Path(__file__).resolve().parents[1] / "metodologia" / "parametros_valuation.json"
     try:
         t = json.loads(arq.read_text(encoding="utf-8"))["taxa_desconto"]
-        return t["minima"], t["maxima"], t["premio_minimo_sobre_selic"]
+        return t["minima"], t["maxima"], t["premio_minimo_sobre_selic"], t["premio_minimo"], t["premio_maximo"]
     except (OSError, KeyError, ValueError):
-        return 0.20, 0.35, 0.05
+        return 0.20, 0.35, 0.05, 0.05, 0.20
 
 
-TAXA_MIN, TAXA_MAX, _PREMIO_MIN = _faixa_taxa()
+TAXA_MIN, TAXA_MAX, _PREMIO_MIN, PREMIO_SCORE_MIN, PREMIO_SCORE_MAX = _faixa_taxa()
 PREMIO_MINIMO_SOBRE_SELIC = _PREMIO_MIN
 SCORE_MAX_PERPETUIDADE = 30
 
@@ -44,7 +45,8 @@ class ResultadoRisco(BaseModel):
     score: float
     pontos_por_dimensao: dict[str, float]
     taxa_desconto: float
-    selic: float
+    selic: float  # Selic de referência usada (média Focus no horizonte, bruta)
+    selic_por_horizonte: dict[int, float] | None = None  # para recalcular se o horizonte mudar (taxa provisória)
     premio_implicito: float
     horizonte_anos: int
     perpetuidade_permitida_pelo_score: bool
@@ -82,9 +84,11 @@ def calcular_score(notas: dict[str, int]) -> tuple[float, dict[str, float]]:
 
 
 def taxa_desconto(score: float, selic: float) -> tuple[float, float]:
-    """Retorna (taxa total, prêmio implícito sobre a Selic)."""
-    taxa = TAXA_MIN + (TAXA_MAX - TAXA_MIN) * score / 100
-    taxa = max(taxa, selic + PREMIO_MINIMO_SOBRE_SELIC)
+    """Taxa = Selic de referência + prêmio pelo Score (5–20 p.p.), travada entre a mínima e a máxima da casa.
+    Retorna (taxa total, prêmio implícito sobre a Selic)."""
+    premio = PREMIO_SCORE_MIN + (PREMIO_SCORE_MAX - PREMIO_SCORE_MIN) * score / 100
+    taxa = max(selic + premio, selic + PREMIO_MINIMO_SOBRE_SELIC)
+    taxa = min(max(taxa, TAXA_MIN), TAXA_MAX)
     return round(taxa, 4), round(taxa - selic, 4)
 
 
@@ -101,15 +105,20 @@ def fator_anuidade(taxa: float, anos: int) -> float:
     return (1 - (1 + taxa) ** -anos) / taxa
 
 
-def avaliar_risco(notas: dict[str, int], selic: float) -> ResultadoRisco:
+def avaliar_risco(notas: dict[str, int], selic: float | dict[int, float]) -> ResultadoRisco:
+    """`selic`: Selic de referência (fração) ou {horizonte em anos: Selic média Focus nesse horizonte}."""
     score, pontos = calcular_score(notas)
-    taxa, premio = taxa_desconto(score, selic)
+    anos = horizonte(score)
+    por_horizonte = selic if isinstance(selic, dict) else None
+    s = por_horizonte[anos] if por_horizonte else selic
+    taxa, premio = taxa_desconto(score, s)
     return ResultadoRisco(
         score=score,
         pontos_por_dimensao=pontos,
         taxa_desconto=taxa,
-        selic=selic,
+        selic=s,
+        selic_por_horizonte=por_horizonte,
         premio_implicito=premio,
-        horizonte_anos=horizonte(score),
+        horizonte_anos=anos,
         perpetuidade_permitida_pelo_score=score <= SCORE_MAX_PERPETUIDADE,
     )

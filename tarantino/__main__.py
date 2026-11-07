@@ -47,7 +47,7 @@ def cmd_normalizar(args: argparse.Namespace) -> None:
 def cmd_avaliar(args: argparse.Namespace) -> None:
     from tarantino.avaliar import avaliar_case
 
-    r = avaliar_case(args.pasta, selic=args.selic)
+    r = avaliar_case(args.pasta, selic=args.selic, atualizar_mercado=args.atualizar_mercado)
     b = r.base
     print(f"Score {r.risco.score:.0f} · taxa {r.risco.taxa_desconto:.1%} · horizonte {r.risco.horizonte_anos} anos · "
           f"fluxo base {_brl(r.fluxo_base)}/ano")
@@ -118,7 +118,9 @@ def main(argv: list[str] | None = None) -> None:
     n.set_defaults(func=cmd_normalizar)
     v = sub.add_parser("avaliar", help="F6: Score de Risco + valuation (rodar depois de 'normalizar')")
     v.add_argument("pasta")
-    v.add_argument("--selic", type=float, help="Selic a.a. em fração (padrão: Banco Central)")
+    v.add_argument("--selic", type=float, help="Selic de referência a.a. em fração (padrão: média Focus no horizonte)")
+    v.add_argument("--atualizar-mercado", action="store_true",
+                   help="coleta nova fotografia do mercado (padrão: usa _valuation/mercado.json do case)")
     v.set_defaults(func=cmd_avaliar)
     q = sub.add_parser("qualitativo", help="F5: análise qualitativa pelo agente (rodar depois de 'normalizar')")
     q.add_argument("pasta")

@@ -1,0 +1,28 @@
+{
+  "_leia": "Dados de mercado públicos do Banco Central (SGS e Focus/Olinda). Nenhuma informação de case é enviada. Validado com Guilherme Chaves em 07/11/2026.",
+  "sgs": {
+    "url": "https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados/ultimos/{n}?formato=json",
+    "series": {
+      "selic_meta": {"codigo": 432, "unidade": "% a.a.", "descricao": "Selic meta vigente (Copom)"},
+      "ipca_mensal": {"codigo": 433, "unidade": "% no mês", "descricao": "IPCA mensal"},
+      "ipca_12m": {"codigo": 13522, "unidade": "% em 12 meses", "descricao": "IPCA acumulado em 12 meses"},
+      "cambio_ptax_venda": {"codigo": 1, "unidade": "R$/US$", "descricao": "Dólar comercial (venda), PTAX"},
+      "credito_pj_total": {"codigo": 20715, "unidade": "% a.a.", "descricao": "Taxa média de juros das novas operações de crédito, pessoas jurídicas, total"},
+      "credito_pj_capital_giro": {"codigo": 20725, "unidade": "% a.a.", "descricao": "Taxa média de juros, recursos livres, PJ, capital de giro total"}
+    }
+  },
+  "focus": {
+    "url": "https://olinda.bcb.gov.br/olinda/servico/Expectativas/versao/v1/odata/ExpectativasMercadoAnuais",
+    "indicadores": {
+      "selic": {"nome": "Selic", "unidade": "% a.a. (fim de ano)"},
+      "ipca": {"nome": "IPCA", "unidade": "% no ano"},
+      "pib": {"nome": "PIB Total", "unidade": "% no ano"},
+      "cambio": {"nome": "Câmbio", "unidade": "R$/US$ (fim de ano)"}
+    },
+    "_nota": "mediana do relatório Focus mais recente (baseCalculo 0); a série é publicada em dias úteis"
+  },
+  "selic_referencia": {
+    "regra": "média das medianas Focus de Selic de fim de ano nos anos do horizonte do DCF, a partir do ano seguinte à data-base; anos além do último publicado repetem o último; Selic bruta",
+    "_validado": "07/11/2026"
+  }
+}

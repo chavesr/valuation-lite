@@ -1,16 +1,18 @@
 {
   "_leia": "Parâmetros da F6 (valuation). Valores iniciais A CALIBRAR pela Nova Direção.",
   "taxa_desconto": {
-    "origem": "validado em 06/11/2026: empresas entre 20% e 35% a.a.",
+    "origem": "validado em 07/11/2026: taxa = Selic de referência (média Focus no horizonte, bruta) + prêmio pelo Score; prêmio de 5 a 20 p.p. (calibrado para o JB bater com a ND, 24,4%); taxa final entre 20% e 35%",
     "minima": 0.2,
     "maxima": 0.35,
+    "premio_minimo": 0.05,
+    "premio_maximo": 0.2,
     "premio_minimo_sobre_selic": 0.05,
-    "_nota": "taxa = mínima + (máxima − mínima) × Score/100; piso Selic + prêmio mínimo"
+    "_nota": "taxa = clamp(Selic_ref + premio_minimo + (premio_maximo − premio_minimo) × Score/100, minima, maxima)"
   },
   "selic_padrao": {
     "valor": 0.1375,
     "data": "2026-11-06",
-    "_nota": "usada só se a consulta ao Banco Central falhar"
+    "_nota": "usada só se não houver Focus nem Selic meta (sem internet e sem cache)"
   },
   "lucro_sustentavel": {
     "origem": "validado em 06/11/2026: média dos períodos (até 3), nunca acima do mais recente",
