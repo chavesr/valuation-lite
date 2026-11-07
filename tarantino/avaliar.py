@@ -15,6 +15,7 @@ from engine.gci import ResultadoGCI
 from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
 from engine.score_case import NotaDimensao, aplicar_qualitativo, propor_notas
+from engine.finalidade import leitura, ler_finalidade
 from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
 from tarantino.mercado import DadoIndisponivel, mudancas, obter_mercado, selic_por_horizonte
 from tarantino.case import DadosCase, ler_estado
@@ -64,6 +65,8 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     if r.retencao_sugerida:
         linhas.append(f"- **Retenção sugerida no fechamento: R$ {brl(r.retencao_sugerida, 0)}** (não reduz o preço; "
                       "`contingencias_decisoes.json` para reclassificar)")
+    if r.leitura_finalidade:
+        linhas += ["", "## Finalidade da transação", "", *[f"- {x}" for x in r.leitura_finalidade]]
     if r.valor_oferta is not None:
         linhas += ["", "## Valor de referência (teto para a oferta na rede) e ponte para o dono", "",
                    f"Maior entre o valor da empresa pelo fluxo e os ativos a mercado (critério da ND): **R$ "
@@ -164,6 +167,11 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
                                  "(ativos a valor de mercado, critério da ND). Define o valor mínimo do preço.")
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"])
+    fin = ler_finalidade(saida)  # D7
+    resultado.finalidade = fin.descricao
+    resultado.leitura_finalidade, alertas_fin = leitura(fin, resultado.preco_recomendado, resultado.valor_oferta,
+                                                        resultado.fluxo_base)
+    resultado.alertas += alertas_fin
     if aviso_mercado:
         resultado.alertas.insert(0, aviso_mercado)
     resultado.aviso_mercado = aviso_mercado

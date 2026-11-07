@@ -87,6 +87,8 @@ class ResultadoValuation(BaseModel):
     valor_oferta: float | None = None  # maior entre valor da empresa (DCF base) e ativos a mercado
     valor_oferta_origem: str | None = None  # "fluxo (DCF)" ou "ativos a mercado"
     ponte_dono: list[tuple[str, float]] = Field(default_factory=list)  # do valor de oferta ao que sobra ao dono
+    finalidade: str | None = None  # D7: venda total / parcial / entrada de sócio
+    leitura_finalidade: list[str] = Field(default_factory=list)
     epv: float | None = None
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
     cenarios: list[Cenario] = Field(default_factory=list)

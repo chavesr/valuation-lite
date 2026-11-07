@@ -18,6 +18,7 @@ from pathlib import Path
 from captacao.util import brl
 from engine.gci import ResultadoGCI
 from engine.normalizacao import DREEconomica, atividade_evidenciada
+from engine.finalidade import ler_finalidade
 from engine.score_case import divida_liquida, propor_notas
 from julgamento.esquemas import Qualitativo
 from julgamento.executor import ErroJulgamento, executar_claude_code, extrair_json
@@ -80,6 +81,7 @@ def montar_entrada(pasta_empresa: str | Path, excluir_referencia: str | None = N
          f"# Case {estado.id} — fatos levantados pelo sistema", "",
          f"- Período analisado: {estado.periodo_inicio} a {estado.periodo_fim}",
          f"- Atividade principal (playbook): {playbook}",
+         f"- Finalidade da transação: {ler_finalidade(saida).descricao}",
          f"- CNPJs no grupo: {len(dados.empresa.cnpjs)} · sócios: {len(dados.empresa.socios)}"]
     if gci:
         p.append(f"- GCI (confiabilidade da informação) {gci.indice:.1f}, nível {gci.nivel}: receita caixa 12m "

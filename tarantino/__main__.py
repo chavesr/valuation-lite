@@ -3,6 +3,7 @@
     python -m tarantino abrir "<pasta da empresa>" [--fim 2026-10] [--meses 24] [--cnpj ...]
     python -m tarantino qualitativo "<pasta>" [--modo claude-code|manual] [--importar]
     python -m tarantino calibrar "<pasta de trabalho>" [--so R1 R2]
+    python -m tarantino finalidade "<pasta>" [--tipo entrada_socio] [--percentual 0.3] [--aporte ...] [--pedido ...]
     python -m tarantino mercado [--forcar]
     python -m tarantino status "<pasta da empresa>"
 """
@@ -55,6 +56,8 @@ def cmd_avaliar(args: argparse.Namespace) -> None:
     print("  " + " · ".join(f"{c.nome} {_brl(c.valor_patrimonio)}" for c in r.cenarios))
     print(f"  preço recomendado (margem de segurança): {_brl(r.preco_recomendado)}")
     print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/valuation.md · notas do Score: score_notas.json")
+    for linha in r.leitura_finalidade[1:]:
+        print(f"  {linha.replace('**', '')}")
     if r.aviso_mercado:
         print(f"\n⚠ {r.aviso_mercado}")
 
@@ -118,6 +121,23 @@ def cmd_mercado(args: argparse.Namespace) -> None:
         print(f"  ! {a}")
 
 
+def cmd_finalidade(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from engine.finalidade import Finalidade, gravar_finalidade, ler_finalidade
+
+    saida = Path(args.pasta) / PASTA_SAIDA
+    if not saida.exists():
+        sys.exit("Rode antes: python -m tarantino abrir")
+    atual = ler_finalidade(saida).model_dump()
+    novos = {k: v for k, v in {"tipo": args.tipo, "percentual": args.percentual, "aporte": args.aporte,
+                               "pedido_vendedor": args.pedido}.items() if v is not None}
+    f = Finalidade.model_validate({**atual, **novos})
+    gravar_finalidade(saida, f)
+    print(f"Finalidade: {f.descricao}" + (f" · pedido do vendedor R$ {f.pedido_vendedor:,.0f}".replace(",", ".")
+                                         if f.pedido_vendedor else "") + " · rode 'avaliar' para ver a leitura")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     e = ler_estado(args.pasta)
     print(f"Case {e.id} · {e.empresa} · estado: {e.estado} · atualizado em {e.atualizado_em}")
@@ -154,6 +174,13 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--mapa", help="JSON caso → pasta (padrão: cases/calibracao.json)")
     c.add_argument("--so", nargs="*", help="rodar só estes casos (ex.: R1 R2)")
     c.set_defaults(func=cmd_calibrar)
+    f = sub.add_parser("finalidade", help="D7: venda total/parcial ou entrada de sócio, % das cotas, aporte, pedido")
+    f.add_argument("pasta")
+    f.add_argument("--tipo", choices=["venda_total", "venda_parcial", "entrada_socio"])
+    f.add_argument("--percentual", type=float, help="fração das cotas (0.3 = 30%%)")
+    f.add_argument("--aporte", type=float, help="dinheiro novo que entra na empresa, em R$")
+    f.add_argument("--pedido", type=float, help="quanto o dono pede pela participação, em R$")
+    f.set_defaults(func=cmd_finalidade)
     m = sub.add_parser("mercado", help="mostra o painel de mercado (BCB/Focus) e atualiza o que venceu")
     m.add_argument("--forcar", action="store_true", help="busca tudo de novo, mesmo o que não venceu")
     m.set_defaults(func=cmd_mercado)
