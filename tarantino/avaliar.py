@@ -57,9 +57,13 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     linhas += ["", "## Da empresa ao patrimônio",
                f"- Dívida bruta R$ {brl(r.divida_bruta, 0)} ({r.divida_fonte}) − caixa R$ {brl(r.caixa, 0)} = dívida "
                f"líquida **R$ {brl(r.divida_bruta - r.caixa, 0)}**"]
+    rotulo = {"provavel": "provável → desconta", "possivel": "possível → retenção", "remota": "remota → não afeta"}
     for c in r.contingencias:
-        linhas.append(f"- Contingência: {c.descricao} — R$ {brl(c.valor_bruto, 0)} × {c.probabilidade:.0%} = "
-                      f"**R$ {brl(c.valor, 0)}** ({c.fonte})")
+        linhas.append(f"- Contingência {rotulo[c.classificacao]}: {c.descricao} — **R$ {brl(c.valor_bruto, 0)}** "
+                      f"({c.fonte}){' — ' + c.nota if c.nota else ''}")
+    if r.retencao_sugerida:
+        linhas.append(f"- **Retenção sugerida no fechamento: R$ {brl(r.retencao_sugerida, 0)}** (não reduz o preço; "
+                      "`contingencias_decisoes.json` para reclassificar)")
     linhas += ["", "## Referências",
                f"- Piso patrimonial (liquidação ordenada): R$ {brl(r.piso_patrimonial, 0)}" if r.piso_patrimonial is not None
                else "- Piso patrimonial: sem Balanço",
@@ -109,7 +113,15 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None) -> Resul
         selic, data_selic, fonte_selic = selic_atual(p["selic_padrao"])
         fonte_selic = f"{fonte_selic}, {data_selic}"
     risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic)
-    resultado = avaliar(dados, dres, gci, risco, notas, p)
+    arq_cont = saida / "contingencias_decisoes.json"
+    dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
+    resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont)
+    for c in resultado.contingencias:  # Checkpoint: o analista reclassifica, corrige ou acrescenta
+        dec_cont.setdefault(c.id, {"descricao": c.descricao, "valor_calculado": c.valor_bruto,
+                                   "classificacao": None, "valor_bruto": None, "nota": None})
+    dec_cont.setdefault("_leia", "classificacao: provavel (desconta) | possivel (retenção) | remota (ignora). "
+                                  "Para acrescentar: nova chave com descricao, valor_bruto, classificacao e fonte.")
+    arq_cont.write_text(json.dumps(dec_cont, indent=2, ensure_ascii=False), encoding="utf-8")
 
     estado = ler_estado(pasta)
     (saida / "valuation.json").write_text(resultado.model_dump_json(indent=2), encoding="utf-8")

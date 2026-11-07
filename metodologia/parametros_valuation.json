@@ -44,17 +44,19 @@
     "imobilizado": 0.4
   },
   "contingencias": {
-    "origem": "a calibrar: probabilidade de materialização × anos considerados",
+    "origem": "validado 07/11/2026 (regra da casa, relatórios R1–R3): provável desconta do preço; possível e quantificável vira retenção (escrow), sem desconto; remota não afeta o preço",
     "receita_nao_declarada": {
       "anos": 5,
-      "probabilidade": 0.3,
-      "_nota": "tributos sobre a receita não declarada (alíquota do regime atual)"
+      "classificacao": "possivel",
+      "_nota": "tributo latente sobre a receita fora dos livros, com a carga efetiva da própria empresa, nos anos não prescritos (padrão R1: retenção)"
     },
     "pj": {
       "anos": 2,
-      "probabilidade": 0.3,
-      "_nota": "encargos de vínculo de emprego sobre o custo PJ"
-    }
+      "classificacao": "possivel",
+      "_nota": "encargos de vínculo de emprego (50%) sobre o custo PJ"
+    },
+    "bloqueante_fracao_receita": 1.0,
+    "_bloqueante": "provável + possível acima do faturamento anual, sem parecer jurídico: não negociar antes do parecer (R4)"
   },
   "multiplos_referencia_ev_ebitda": {
     "origem": "a calibrar: faixa de mercado para PMEs (só checagem)",

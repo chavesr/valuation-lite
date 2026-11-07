@@ -55,3 +55,51 @@ def test_valuation_ponta_a_ponta_com_divida_e_piso():
     assert base_c.valor_patrimonio == pytest.approx(base_c.valor_empresa - 300_000)  # − dívida líquida
     assert r.preco_recomendado == pytest.approx(max(base_c.valor_patrimonio * 0.75, 0.0))
     assert any("aguardando o analista" in a for a in r.alertas)
+
+
+def _avaliar_com(dec):
+    dados = _dados()
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1375)
+    return avaliar(dados, dres, None, risco, notas, None, dec)
+
+
+def test_d2_provavel_desconta_possivel_retem_remota_ignora():
+    sem = _avaliar_com({})
+    com = _avaliar_com({
+        "divida_fiscal": {"descricao": "Débito fiscal estimado", "valor_bruto": 50_000, "classificacao": "provavel"},
+        "trabalhista": {"descricao": "Reclamação trabalhista", "valor_bruto": 70_000, "classificacao": "possivel"},
+        "ambiental": {"descricao": "Licença vencida", "valor_bruto": 10_000, "classificacao": "remota"},
+        "_leia": "ignorado"})
+    assert com.base.valor_patrimonio == pytest.approx(sem.base.valor_patrimonio - 50_000)
+    assert com.retencao_sugerida == 70_000
+    assert any("Retenção sugerida" in a for a in com.alertas)
+    assert {c.id: c.classificacao for c in com.contingencias} == {
+        "divida_fiscal": "provavel", "trabalhista": "possivel", "ambiental": "remota"}
+
+
+def test_d2_bloqueante_quando_contingencias_passam_do_faturamento():
+    receita = _avaliar_com({}).receita_base
+    r = _avaliar_com({"iss": {"descricao": "Auto de ISS sem parecer", "valor_bruto": receita * 1.5,
+                              "classificacao": "possivel"}})
+    assert any(a.startswith("BLOQUEANTE") for a in r.alertas)
+
+
+def test_d2_tributo_latente_usa_carga_efetiva_da_empresa():
+    from types import SimpleNamespace
+
+    from engine.normalizacao import DREEconomica, Linha
+    from engine.valuation import carga_efetiva_atual, contingencias
+
+    base = DREEconomica(periodo="2025", meses=12, atividade="comercio", regime_comprador="Simples Nacional",
+                        receita_fonte="caixa (extratos)", receitas_por_fonte={"declarada": 600_000.0},
+                        linhas=[Linha(conta="Receita bruta", valor=1_000_000, fonte="extratos"),
+                                Linha(conta="Tributos sobre a receita", valor=-200_000, fonte="comprador")])
+    dados = SimpleNamespace(simples={"aliquota_efetiva": 0.08}, dres=[], erp=None)
+    assert carga_efetiva_atual(dados, base) == (0.08, "alíquota efetiva do PGDAS-D")
+    (c,) = contingencias(dados, base, carregar_parametros())
+    assert c.id == "receita_nao_declarada" and c.classificacao == "possivel"
+    assert c.valor_bruto == pytest.approx(400_000 * 0.08 * 5)  # 5 anos não prescritos, carga de 8% (não a do comprador)
+    (c,) = contingencias(dados, base, carregar_parametros(), {"receita_nao_declarada": {"classificacao": "provavel"}})
+    assert c.valor == c.valor_bruto  # reclassificada pelo analista: passa a descontar

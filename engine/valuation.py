@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -26,15 +27,26 @@ def carregar_parametros(caminho: str | Path = PARAMETROS) -> dict:
     return json.loads(Path(caminho).read_text(encoding="utf-8"))
 
 
+Classificacao = Literal["provavel", "possivel", "remota"]
+
+
 class Contingencia(BaseModel):
+    """Regra da casa: provável desconta do preço; possível vira retenção (escrow); remota não afeta o preço."""
+
+    id: str
     descricao: str
     valor_bruto: float
-    probabilidade: float
+    classificacao: Classificacao
     fonte: str
+    nota: str | None = None
 
     @property
-    def valor(self) -> float:
-        return round(self.valor_bruto * self.probabilidade, 2)
+    def valor(self) -> float:  # o que sai do valor do patrimônio
+        return round(self.valor_bruto, 2) if self.classificacao == "provavel" else 0.0
+
+    @property
+    def retencao(self) -> float:  # o que fica retido no fechamento
+        return round(self.valor_bruto, 2) if self.classificacao == "possivel" else 0.0
 
 
 class Cenario(BaseModel):
@@ -64,6 +76,7 @@ class ResultadoValuation(BaseModel):
     caixa: float
     divida_fonte: str
     contingencias: list[Contingencia] = Field(default_factory=list)
+    retencao_sugerida: float = 0.0  # contingências possíveis: ficam retidas no fechamento, não descontam o preço
     piso_patrimonial: float | None = None
     epv: float | None = None
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
@@ -124,24 +137,55 @@ def liquidacao(dados, p: dict) -> tuple[float | None, float | None]:
     return round(piso, 2), round(max(operacionais - passivos_op, 0.0), 2)
 
 
-def contingencias(dados, base: DREEconomica, p: dict) -> list[Contingencia]:
+def carga_efetiva_atual(dados, base: DREEconomica) -> tuple[float, str]:
+    """Carga tributária sobre a receita que a empresa paga hoje (para o tributo latente da receita fora dos livros)."""
+    aliq = (getattr(dados, "simples", None) or {}).get("aliquota_efetiva")
+    if aliq:
+        return aliq, "alíquota efetiva do PGDAS-D"
+    contabeis = [x for x in (getattr(dados, "dres", None) or []) if x.receita_bruta and x.deducoes]
+    if contabeis:
+        x = max(contabeis, key=lambda x: (x.exercicio, x.meses))
+        return abs(x.deducoes) / x.receita_bruta, f"deduções/receita da DRE contábil {x.exercicio}"
+    receita = base.valor("Receita bruta")
+    return (abs(base.valor("Tributos sobre a receita")) / receita if receita else 0.0,
+            "tributos do regime do comprador (aproximação)")
+
+
+def contingencias(dados, base: DREEconomica, p: dict, decisoes: dict | None = None) -> list[Contingencia]:
+    """Contingências calculadas + decisões/acréscimos do analista (_valuation/contingencias_decisoes.json)."""
     c = p["contingencias"]
     out = []
     decl = base.receitas_por_fonte.get("declarada") or base.receitas_por_fonte.get("contabil")
     receita = base.valor("Receita bruta")
     if decl and receita > decl and "caixa" in base.receita_fonte:
-        aliq = abs(base.valor("Tributos sobre a receita")) / receita if receita else 0
+        aliq, fonte_aliq = carga_efetiva_atual(dados, base)
         anual = (receita - decl) * 12 / base.meses * aliq
         r = c["receita_nao_declarada"]
-        out.append(Contingencia(descricao=f"Tributos sobre receita não declarada ({r['anos']} anos)",
-                                valor_bruto=round(anual * r["anos"], 2), probabilidade=r["probabilidade"],
-                                fonte="receita econômica × declarada"))
+        out.append(Contingencia(id="receita_nao_declarada",
+                                descricao=f"Tributos sobre receita não declarada ({r['anos']} anos não prescritos, "
+                                          f"carga de {aliq:.1%})",
+                                valor_bruto=round(anual * r["anos"], 2), classificacao=r["classificacao"],
+                                fonte=f"receita econômica × declarada; {fonte_aliq}"))
     pj = (getattr(dados, "erp", None) or {}).get("pj_total_mensal")
     if pj:
         r = c["pj"]
-        out.append(Contingencia(descricao=f"Vínculo de emprego dos PJ ({r['anos']} anos de encargos)",
-                                valor_bruto=round(pj * 12 * 0.5 * r["anos"], 2), probabilidade=r["probabilidade"],
+        out.append(Contingencia(id="pj", descricao=f"Vínculo de emprego dos PJ ({r['anos']} anos de encargos)",
+                                valor_bruto=round(pj * 12 * 0.5 * r["anos"], 2), classificacao=r["classificacao"],
                                 fonte="planilha de colaboradores PJ"))
+    for k, dec in (decisoes or {}).items():
+        if k.startswith("_"):
+            continue
+        atual = next((x for x in out if x.id == k), None)
+        if atual:  # o analista reclassifica ou corrige o valor
+            if dec.get("classificacao"):
+                atual.classificacao = dec["classificacao"]
+            if dec.get("valor_bruto") is not None:
+                atual.valor_bruto = float(dec["valor_bruto"])
+            atual.nota = dec.get("nota")
+        elif dec.get("descricao") and dec.get("valor_bruto") is not None and dec.get("classificacao"):
+            out.append(Contingencia(id=k, descricao=dec["descricao"], valor_bruto=float(dec["valor_bruto"]),
+                                    classificacao=dec["classificacao"], fonte=dec.get("fonte") or "analista",
+                                    nota=dec.get("nota")))
     return out
 
 
@@ -173,13 +217,13 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 
 
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
-            p: dict | None = None) -> ResultadoValuation:
+            p: dict | None = None, decisoes_contingencias: dict | None = None) -> ResultadoValuation:
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
     perp, motivo = teste_perpetuidade(dados, notas, risco, gci, p)
     bruta, caixa, fonte_div = divida_liquida(dados)
-    conts = contingencias(dados, base, p)
+    conts = contingencias(dados, base, p, decisoes_contingencias)
     piso, liquidacao_operacional = liquidacao(dados, p)
     ajuste_patrimonio = -(bruta - caixa) - sum(c.valor for c in conts)
     cr = p["crescimento"]
@@ -190,7 +234,8 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     r = ResultadoValuation(periodo_base=base.periodo, fluxo_base=fluxo, fluxo_fonte=fonte, ebitda_base=base.ebitda,
                            receita_base=base.valor("Receita bruta"), crescimento_historico=hist, risco=risco, notas=notas,
                            perpetuidade=perp, perpetuidade_motivo=motivo, divida_bruta=bruta, caixa=caixa,
-                           divida_fonte=fonte_div, contingencias=conts, piso_patrimonial=piso)
+                           divida_fonte=fonte_div, contingencias=conts, piso_patrimonial=piso,
+                           retencao_sugerida=round(sum(c.retencao for c in conts), 2))
     ativos_liquidos = liquidacao_operacional or 0.0  # valor terminal (firma) no cenário base/otimista
     mult_vt = p["valor_terminal"]["multiplo_do_fluxo"]
     for nome, dtaxa, g in (("conservador", t["conservador"], cr["conservador"]),
@@ -222,6 +267,15 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     r.preco_recomendado = round(max(valor_base * (1 - p["margem_de_seguranca"]["percentual"]), piso or 0.0, 0.0), 2)
 
     # alertas e sanidade
+    expostas = sum(c.valor_bruto for c in conts if c.classificacao != "remota")
+    receita_anual = base.valor("Receita bruta") * 12 / base.meses if base.meses else 0
+    if receita_anual and expostas > receita_anual * p["contingencias"]["bloqueante_fracao_receita"]:
+        r.alertas.append(f"BLOQUEANTE: contingências prováveis + possíveis (R$ {expostas:,.0f}) acima do faturamento "
+                         f"anual (R$ {receita_anual:,.0f}). Não negociar antes de parecer jurídico.".replace(",", "."))
+    if r.retencao_sugerida:
+        r.alertas.append(f"Retenção sugerida no fechamento (contingências possíveis): R$ {r.retencao_sugerida:,.0f} — "
+                         "não desconta do preço; é liberada ao vendedor se a contingência não se materializar."
+                         .replace(",", "."))
     if fluxo <= 0:
         r.alertas.append("Owner earnings sustentável ≤ 0: o valor vem só do patrimônio (piso) — não há fluxo a descontar.")
     elif not perp:
