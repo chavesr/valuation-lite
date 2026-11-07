@@ -103,3 +103,13 @@ def test_d2_tributo_latente_usa_carga_efetiva_da_empresa():
     assert c.valor_bruto == pytest.approx(400_000 * 0.08 * 5)  # 5 anos não prescritos, carga de 8% (não a do comprador)
     (c,) = contingencias(dados, base, carregar_parametros(), {"receita_nao_declarada": {"classificacao": "provavel"}})
     assert c.valor == c.valor_bruto  # reclassificada pelo analista: passa a descontar
+
+
+def test_d4_regua_da_casa_e_payback_do_preco():
+    r = _avaliar_com({"divida_fiscal": {"descricao": "Débito", "valor_bruto": 20_000, "classificacao": "provavel"}})
+    descontos = (r.divida_bruta - r.caixa) + 20_000
+    assert set(r.regua_payback) == {"forcada", "mercado", "maximo"}
+    m = r.regua_payback["mercado"]
+    assert m["anos"] == 2.5 and m["valor_empresa"] == pytest.approx(2.5 * r.fluxo_base, abs=0.01)
+    assert m["valor_patrimonio"] == pytest.approx(m["valor_empresa"] - descontos, abs=0.01)
+    assert r.payback_preco == pytest.approx((r.preco_recomendado + descontos) / r.fluxo_base, abs=0.01)

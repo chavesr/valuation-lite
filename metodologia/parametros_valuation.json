@@ -82,5 +82,11 @@
       "otimista": 3.0
     },
     "_nota": "valor terminal = múltiplo × fluxo do último ano projetado, nunca abaixo da liquidação dos ativos operacionais"
+  },
+  "regua_payback": {
+    "origem": "validado 07/11/2026 (régua da casa nos relatórios R1/R2): preço = anos de caixa livre que o comprador leva para recuperar o investimento; usada como conferência do DCF, não como método principal",
+    "forcada": 1.5,
+    "mercado": 2.5,
+    "maximo": 3.0
   }
 }

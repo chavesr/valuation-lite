@@ -78,6 +78,8 @@ class ResultadoValuation(BaseModel):
     contingencias: list[Contingencia] = Field(default_factory=list)
     retencao_sugerida: float = 0.0  # contingências possíveis: ficam retidas no fechamento, não descontam o preço
     aviso_mercado: str | None = None  # Selic mudou desde a fotografia do case (o analista decide se atualiza)
+    regua_payback: dict[str, dict[str, float]] = Field(default_factory=dict)  # régua da casa (conferência)
+    payback_preco: float | None = None  # anos de fluxo para pagar o preço recomendado + dívida + prováveis
     piso_patrimonial: float | None = None
     epv: float | None = None
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
@@ -266,6 +268,27 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
 
     valor_base = max(base_c.valor_patrimonio, piso or float("-inf")) if piso is not None else base_c.valor_patrimonio
     r.preco_recomendado = round(max(valor_base * (1 - p["margem_de_seguranca"]["percentual"]), piso or 0.0, 0.0), 2)
+
+    # régua da casa (payback): valor da empresa = anos × fluxo; patrimônio = empresa − dívida líquida − prováveis
+    rp = p["regua_payback"]
+    descontos = (bruta - caixa) + sum(c.valor for c in conts)
+    if fluxo > 0:
+        for nome in ("forcada", "mercado", "maximo"):
+            ev_regua = round(rp[nome] * fluxo, 2)
+            r.regua_payback[nome] = {"anos": rp[nome], "valor_empresa": ev_regua,
+                                     "valor_patrimonio": round(ev_regua - descontos, 2)}
+        r.payback_preco = round((r.preco_recomendado + descontos) / fluxo, 2)
+        do_piso = piso is not None and r.preco_recomendado > 0 and abs(r.preco_recomendado - max(piso, 0.0)) < 1
+        if do_piso and r.payback_preco > rp["maximo"]:
+            r.alertas.append(f"Preço recomendado vem do piso patrimonial (ativos), não do fluxo: pelo caixa ele se "
+                             f"pagaria em {r.payback_preco:.1f} anos — a régua da casa não se aplica; a negociação é "
+                             "pelos ativos (confirmar valor de realização).")
+        elif r.payback_preco > rp["maximo"]:
+            r.alertas.append(f"Preço recomendado se paga em {r.payback_preco:.2f} anos de fluxo: acima da régua da "
+                             f"casa ({rp['maximo']:.1f} anos). Comprador dificilmente aceita.")
+        elif r.payback_preco < rp["forcada"] and r.preco_recomendado > 0:
+            r.alertas.append(f"Preço recomendado se paga em {r.payback_preco:.1f} anos: abaixo da venda forçada da "
+                             f"régua ({rp['forcada']:.1f}); conferir se o DCF não está conservador demais.")
 
     # alertas e sanidade
     expostas = sum(c.valor_bruto for c in conts if c.classificacao != "remota")

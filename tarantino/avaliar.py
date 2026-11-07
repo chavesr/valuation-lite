@@ -64,6 +64,17 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     if r.retencao_sugerida:
         linhas.append(f"- **Retenção sugerida no fechamento: R$ {brl(r.retencao_sugerida, 0)}** (não reduz o preço; "
                       "`contingencias_decisoes.json` para reclassificar)")
+    if r.regua_payback:
+        nomes = {"forcada": "Venda forçada", "mercado": "Mercado", "maximo": "Máximo (régua da casa)"}
+        linhas += ["", "## Conferência: régua da casa (payback)", "",
+                   "Quantos anos de fluxo o comprador leva para recuperar o que paga (preço + dívida líquida + "
+                   "contingências prováveis).", "",
+                   "| Régua | Anos de fluxo | Valor da empresa | Valor do patrimônio |", "|---|---:|---:|---:|"]
+        for k, v in r.regua_payback.items():
+            linhas.append(f"| {nomes[k]} | {v['anos']:.1f} | {brl(v['valor_empresa'], 0)} | "
+                          f"{brl(v['valor_patrimonio'], 0)} |")
+        linhas.append(f"\nO preço recomendado (R$ {brl(r.preco_recomendado, 0)}) se paga em "
+                      f"**{r.payback_preco:.2f} anos** de fluxo.")
     linhas += ["", "## Referências",
                f"- Piso patrimonial (liquidação ordenada): R$ {brl(r.piso_patrimonial, 0)}" if r.piso_patrimonial is not None
                else "- Piso patrimonial: sem Balanço",
