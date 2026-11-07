@@ -75,6 +75,13 @@ Sistema que produz um **report de valuation em PDF** para PMEs brasileiras (fatu
 
 Os agentes são **chamadas únicas com saída estruturada** (JSON validado por esquema), e não agentes autônomos em loop. Isso reduz o custo e torna o resultado previsível.
 
+**Como o agente é executado** (decisão de 07/11/2026; pacote `julgamento/`): o tarantino grava um pacote (`_valuation/f5_entrada.md`) com as instruções (`agents/`), os playbooks (`metodologia/playbooks/`), os fatos do case e o esquema da resposta. O pacote pode ser executado de três modos:
+- `claude-code` (padrão): roda `claude -p` com a conta logada, numa pasta neutra, sem acesso aos arquivos do cliente.
+- `manual`: Claude Code interativo, claude.ai ou o próprio analista gravam `f5_saida.json`, e depois roda-se `--importar`.
+- `api`: reservado para quando houver chave da API.
+
+O código só aceita JSON que passe na validação (`julgamento/esquemas.py`). As notas da F5 entram no Score como "F5 (proposta)", ainda pendentes, e o analista as aprova em `score_notas.json`.
+
 ## 6. Grau de Confiabilidade da Informação (GCI)
 
 **Triangulação da receita** (por período e por CNPJ):
@@ -143,7 +150,7 @@ Os agentes são **chamadas únicas com saída estruturada** (JSON validado por e
 | Contingências (fiscal, trabalhista, informalidade) | 10 | código + agente |
 | Setor e posição competitiva (fosso) | 10 | agente, com aprovação humana |
 
-Cada dimensão recebe nota de 1 a 5, convertida em pontos. Dimensões objetivas são calculadas por código. Nas subjetivas, o agente propõe a nota com evidências e o humano aprova no Checkpoint 2.
+Cada dimensão recebe nota de 1 a 5 na **escala da ND: 5 = melhor (risco mínimo), 1 = pior (risco máximo)** (adotada em 07/11/2026). A nota é convertida em pontos de risco: peso × (5 − nota) / 4. Dimensões objetivas são calculadas por código. Nas subjetivas, o agente propõe a nota com evidências e o humano aprova no Checkpoint 2.
 
 **Do score para a taxa e o horizonte:**
 - `taxa total = 20% + 15% × (score / 100)` (faixa em `metodologia/parametros_valuation.json`), com piso de `Selic + 5 p.p.`.

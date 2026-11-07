@@ -70,7 +70,7 @@ class ResultadoValuation(BaseModel):
     cenarios: list[Cenario] = Field(default_factory=list)
     sensibilidade: dict[str, dict[str, float]] = Field(default_factory=dict)  # taxa → crescimento → patrimônio
     preco_recomendado: float = 0.0
-    taxa_provisoria: dict[str, float] | None = None  # faixa da taxa se as notas pendentes forem 1 ou 5
+    taxa_provisoria: dict[str, float] | None = None  # faixa da taxa se as notas pendentes forem 5 (melhor) ou 1 (pior)
     alertas: list[str] = Field(default_factory=list)
 
     @property
@@ -150,15 +150,15 @@ def teste_perpetuidade(dados, notas: dict[str, NotaDimensao], risco: ResultadoRi
         return False, f"Score {risco.score:.0f} > 30"
     t = p["teste_perpetuidade"]
     falhas = []
-    if notas["recorrencia_receita"].pendente or notas["recorrencia_receita"].nota > 2:
+    if notas["recorrencia_receita"].pendente or notas["recorrencia_receita"].nota < 4:
         falhas.append("recorrência não comprovada")
-    if notas["historico_mercado"].nota > 2:
+    if notas["historico_mercado"].nota < 4:
         falhas.append(f"menos de {t['anos_de_mercado_minimo']} anos de mercado")
-    if notas["concentracao_clientes"].nota > 3:
+    if notas["concentracao_clientes"].nota < 3:
         falhas.append("clientes concentrados")
     if not gci or gci.nivel not in t["gci_niveis"]:
         falhas.append("GCI abaixo de B")
-    if notas["dependencia_dono"].nota > t["dependencia_dono_nota_maxima"]:
+    if notas["dependencia_dono"].nota < t["dependencia_dono_nota_minima"]:
         falhas.append("dependência do dono")
     return (not falhas), ("aprovado" if not falhas else "reprovado: " + ", ".join(falhas))
 
@@ -243,8 +243,8 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     pendentes = [n.dimensao for n in notas.values() if n.pendente]
     if pendentes:
         notas_num = {k: v.nota for k, v in notas.items()}
-        otim = avaliar_risco({**notas_num, **{k: 1 for k in pendentes}}, risco.selic)
-        pess = avaliar_risco({**notas_num, **{k: 5 for k in pendentes}}, risco.selic)
+        otim = avaliar_risco({**notas_num, **{k: 5 for k in pendentes}}, risco.selic)
+        pess = avaliar_risco({**notas_num, **{k: 1 for k in pendentes}}, risco.selic)
         r.taxa_provisoria = {"minima": otim.taxa_desconto, "maxima": pess.taxa_desconto}
     if pendentes:
         r.alertas.append(f"{len(pendentes)} nota(s) do Score com padrão conservador ou aguardando o analista: "

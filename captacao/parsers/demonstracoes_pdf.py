@@ -22,7 +22,7 @@ from typing import Literal
 from captacao.schemas import BalancoAnual, DREAnual, Metodo, Proveniencia
 from captacao.util import apenas_digitos, brl, normalizar_texto
 
-Tipo = Literal["dre", "balanco"]
+Tipo = Literal["dre", "balanco", "balancete"]
 
 
 class DemonstracaoNaoLida(Exception):
@@ -147,6 +147,73 @@ def montar_arvore(linhas: list[Linha], tipo: Tipo) -> list[Conta]:
     return raizes
 
 
+# Layout "classificação": "352 03 (=) RESULTADO LÍQUIDO 2.445.752,76C" — código reduzido, classificação
+# hierárquica (01, 01.1, 01.1.1 …), nome e valor com natureza D/C (às vezes seguido de lixo de impressão).
+_RE_CLASSIFICACAO = re.compile(r"^\s*\d+\s+(\d{1,2}(?:\.\d+)*)\s+(.+?)\s+(-?[\d.]+,\d{2})\s*([DC])(?![A-Za-z])")
+_RE_VALOR_DC = re.compile(r"(-?[\d.]+,\d{2})\s*([DC])?(?![A-Za-z])")
+
+
+def montar_arvore_classificacao(textos: list[str], tipo: Tipo) -> list[Conta]:
+    """Uma ou duas colunas de valor (saldo anterior e saldo atual): valores = [anterior, atual] ou [atual]."""
+    raizes: list[Conta] = []
+    pilha: list[Conta] = []
+    sinal_secao = 1
+    for t in textos:
+        m = _RE_CLASSIFICACAO.match(t)
+        if not m:
+            continue
+        classif, nome = m.group(1), m.group(2)
+        nivel = classif.count(".")
+        if nivel == 0:
+            sinal_secao = 1 if (tipo == "balanco" and normalizar_texto(nome).startswith("ATIVO")) else -1
+        tokens = _RE_VALOR_DC.findall(t[m.start(3):])[:2]
+        valores = [float(v.replace(".", "").replace(",", ".")) * (1 if nat != "C" else -1) * sinal_secao
+                   for v, nat in tokens]
+        conta = Conta(nome=re.sub(r"\s+", " ", nome).strip(), nivel=nivel, valores=valores)
+        while pilha and pilha[-1].nivel >= nivel:
+            pilha.pop()
+        (pilha[-1].filhos if pilha else raizes).append(conta)
+        pilha.append(conta)
+    return raizes
+
+
+_RE_GASTO = r"^(DEDUC|CUSTO|CMV|CPV|CSP|DESPESA|IMPOSTO)"
+_RE_GANHO = r"^(RECEITA|LUCRO|RESULTADO|PREJUIZO|OUTRAS RECEITAS)"
+
+
+def _negar(c: Conta) -> None:
+    """Inverte a conta e os filhos, exceto subgrupos de receita (ex.: receitas não operacionais dentro das despesas)."""
+    if re.search(r"^RECEITA", _n(c)):
+        return
+    c.valores = [-v for v in c.valores]
+    for f in c.filhos:
+        _negar(f)
+
+
+def corrigir_sinais_dre(raizes: list[Conta]) -> list[Conta]:
+    """Sistemas que imprimem deduções, custos e despesas como positivos (sem D/C): inverte esses grupos — e, em
+    DREs sem indentação, as linhas que vêm logo abaixo deles até o próximo resultado — quando isso faz as
+    fórmulas da DRE fecharem."""
+    import copy
+
+    if not verificar_formulas_dre(raizes):
+        return raizes
+    invertida = copy.deepcopy(raizes)
+    em_gasto = False
+    for c in invertida:
+        n = _n(c)
+        if re.search(_RE_GASTO, n):
+            em_gasto = True
+        elif re.search(_RE_GANHO, n):
+            em_gasto = False
+            continue
+        if em_gasto and c.atual > 0:
+            _negar(c)
+        elif em_gasto and c.atual < 0 and not c.filhos:  # desconto obtido dentro do custo: reduz o gasto
+            c.valores = [-v for v in c.valores]
+    return invertida if len(verificar_formulas_dre(invertida)) < len(verificar_formulas_dre(raizes)) else raizes
+
+
 _RE_CODIGO = re.compile(r"^\d+\s+\d+(?:\.\d+){2,}\s+")
 _NUM_C = r"\(?-?\d[\d.,]*[.,]\d{2}\)?"
 _RE_VALORES_C = re.compile(rf"\s+({_NUM_C})(?:\s+({_NUM_C}))?\s*$")
@@ -220,7 +287,7 @@ def verificar_formulas_dre(raizes: list[Conta], tolerancia: float = 1.0) -> list
         return c.atual if c else None
 
     bruta, ded, liq = v(r"^RECEITA (OPERACIONAL )?BRUTA|^RECEITA OPERACIONAL$|^RECEITAS? DE VENDAS?$"), v(r"^DEDUC"), v(r"^RECEITA (OPERACIONAL )?LIQUIDA")
-    custo, lucro_bruto = v(r"^(CMV|CPV|CSP|CUSTOS?\b)"), v(r"^LUCRO BRUTO|^RESULTADO BRUTO")
+    custo, lucro_bruto = v(r"^(CMV|CPV|CSP|CUSTOS?\b(?!.*DESPESA))"), v(r"^LUCRO BRUTO|^RESULTADO BRUTO")
     erros = []
     if None not in (bruta, ded, liq) and abs(bruta + ded - liq) > tolerancia:
         erros.append(f"Receita bruta {brl(bruta)} + deduções {brl(ded)} ≠ receita líquida {brl(liq)}.")
@@ -266,7 +333,7 @@ def _soma(contas: list[Conta], idx: int) -> float | None:
     return round(sum(vals), 2) if vals else None
 
 
-PESSOAL = r"SALARIO|ORDENADO|13. SALARIO|FERIAS|^INSS|^FGTS|INDENIZ|AVISO PREVIO|^VALE |ASSISTENCIA MEDICA|PREMIOS|GRATIFIC|IRRF SOB FOLHA|ENCARGOS SOCIAIS"
+PESSOAL = r"SALARIO|ORDENADO|13. SALARIO|FERIAS|^INSS|^F\.?G\.?T\.?S|INDENIZ|AVISO PREVIO|^VALE |ASSISTENCIA MEDICA|PREMIOS|GRATIFIC|IRRF SOB FOLHA|ENCARGOS SOCIAIS"
 FINANCEIRAS = r"JUROS|IOF|VARIAC.*CAMBIA.*PASSIVA|COMISS.*BANCARIA|DESPESAS BANCARIAS|ENCARGOS FINANCEIROS"
 
 
@@ -291,7 +358,7 @@ def mapear_dre(raizes: list[Conta], idx: int) -> dict:
         "receita_bruta": _valor(_primeira(raizes, r"^RECEITA (OPERACIONAL )?BRUTA|^RECEITA OPERACIONAL$|^RECEITAS? DE VENDAS?$"), idx),
         "deducoes": _valor(_primeira(raizes, r"^DEDUC"), idx),
         "receita_liquida": _valor(_primeira(raizes, r"^RECEITA (OPERACIONAL )?LIQUIDA"), idx),
-        "custo_vendas": _valor(_primeira(raizes, r"^(CMV|CPV|CSP|CUSTOS?\b)"), idx),
+        "custo_vendas": _valor(_primeira(raizes, r"^(CMV|CPV|CSP|CUSTOS?\b(?!.*DESPESA))"), idx),
         "despesas_comerciais": _valor(_primeira(raizes, r"^DESPESAS (COM VENDAS|COMERCIAIS)"), idx),
         "despesas_administrativas": _valor(_primeira(raizes, r"^DESPESAS ADMINISTRATIVAS"), idx),
         "despesas_pessoal": _soma(_folhas(raizes, PESSOAL, excluir=r"PRO.?LABORE|ADIANTAMENTO"), idx),
@@ -335,13 +402,104 @@ def mapear_balanco(raizes: list[Conta], idx: int) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- balancete
+
+# "1639 3.2.02.01.0017 SALARIOS 0,00 516.169,02 24.026,22 492.142,80D": código, classificação, descrição,
+# saldo anterior, débito, crédito e saldo atual (natureza D/C nos saldos; 0,00 sem natureza)
+_V = r"-?[\d.]+,\d{2}"
+_RE_BALANCETE = re.compile(
+    rf"^\s*\d+\s+(\d+(?:\.\d+)*)\s+(.+?)\s+({_V})\s*([DC])?\s+({_V})\s+({_V})\s+({_V})\s*([DC])?\s*$")
+_RE_PATRIMONIAL = r"^(ATIVO|PASSIVO|PATRIMONIO)"
+
+
+def montar_arvore_balancete(textos: list[str]) -> list[Conta]:
+    """Árvore pela classificação, com o saldo atual. Patrimoniais: ativo devedor positivo, passivo/PL credor
+    positivo. Resultado: crédito positivo, débito negativo (convenção da DRE)."""
+    raizes: list[Conta] = []
+    pilha: list[Conta] = []
+    secao = ""
+    for t in textos:
+        m = _RE_BALANCETE.match(t)
+        if not m:
+            continue
+        classif, nome, *_, atual, natureza = m.groups()
+        nivel = classif.count(".")
+        nome = re.sub(r"\s+", " ", nome).strip()
+        if nivel == 0:
+            secao = normalizar_texto(nome)
+        v = float(atual.replace(".", "").replace(",", "."))
+        devedor = natureza != "C"
+        positivo = devedor if secao.startswith("ATIVO") else not devedor
+        if nivel == 1 and normalizar_texto(nome) == "CIRCULANTE":  # "CIRCULANTE" sob ATIVO/PASSIVO
+            nome = f"{'ATIVO' if secao.startswith('ATIVO') else 'PASSIVO'} CIRCULANTE"
+        conta = Conta(nome=nome, nivel=nivel, valores=[v if positivo else -v])
+        while pilha and pilha[-1].nivel >= nivel:
+            pilha.pop()
+        (pilha[-1].filhos if pilha else raizes).append(conta)
+        pilha.append(conta)
+    return raizes
+
+
+def ler_linhas_sem_sobreposicao(caminho: str | Path) -> list[Linha]:
+    """Alguns sistemas imprimem por cima da tabela o nome do grupo em fonte maior ("CIRCU2L1A.N1TE"):
+    descarta os caracteres bem maiores que o tamanho dominante da página."""
+    import statistics
+
+    import pdfplumber
+
+    linhas = []
+    with pdfplumber.open(caminho) as pdf:
+        for i, p in enumerate(pdf.pages):
+            tamanhos = [round(c["size"], 1) for c in p.chars]
+            if tamanhos:
+                moda = statistics.mode(tamanhos)
+                p = p.filter(lambda o, m=moda: o.get("object_type") != "char" or o["size"] <= m * 1.25)
+            linhas += [(l["x0"], i * 10000 + (l["top"] + l["bottom"]) / 2, l["text"]) for l in p.extract_text_lines()]
+    return linhas
+
+
+def ler_balancete(caminho: Path, linhas: list[Linha], cabecalho: str) -> "DemonstracaoLida":
+    raizes = montar_arvore_balancete([t for _, _, t in sorted(linhas, key=lambda l: l[1])])
+    if not raizes:
+        raise DemonstracaoNaoLida("balancete sem contas reconhecidas")
+    inicio, fim = _datas(cabecalho)
+    if fim is None:
+        raise DemonstracaoNaoLida("data de encerramento não encontrada no cabeçalho")
+    ent = re.search(r"(?:Entidade|Empresa):\s*(.+?)(?:\s+Folha:.*)?$", cabecalho, flags=re.M)
+    cnpj = re.search(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}", cabecalho)
+    patrimoniais = [r for r in raizes if re.search(_RE_PATRIMONIAL, _n(r))]
+    resultado = [r for r in raizes if r not in patrimoniais]
+    doc = DemonstracaoLida(tipo="balancete", layout="balancete", entidade=ent.group(1).strip() if ent else None,
+                           cnpj=apenas_digitos(cnpj.group(0)) if cnpj else None, data_fim=fim, data_inicio=inicio,
+                           contas=raizes, alertas=[])
+    meses = (fim.month - inicio.month + 1 + 12 * (fim.year - inicio.year)) if inicio else fim.month
+    prov = Proveniencia(arquivo=caminho.name, localizacao="balancete (saldo atual)", metodo=Metodo.PARSER,
+                        confianca="media")
+    if resultado:
+        campos = mapear_dre(resultado, -1)
+        if campos.get("lucro_liquido") is None:  # balancete antes do encerramento: resultado = soma das contas
+            campos["lucro_liquido"] = round(sum(r.atual for r in resultado), 2)
+        if campos.get("receita_liquida") is None and campos.get("receita_bruta") is not None:
+            campos["receita_liquida"] = round(campos["receita_bruta"] + (campos.get("deducoes") or 0), 2)
+        doc.dres.append(DREAnual(cnpj=doc.cnpj or "", exercicio=fim.year, meses=meses, proveniencia=prov, **campos))
+        if not campos.get("custo_vendas"):
+            doc.alertas.append("Balancete sem conta de custo (CMV/CPV/CSP): custo pode estar nas despesas ou não "
+                               "ter sido contabilizado.")
+    if patrimoniais:
+        doc.balancos.append(BalancoAnual(cnpj=doc.cnpj or "", exercicio=fim.year, data_base=fim, proveniencia=prov,
+                                         **mapear_balanco(patrimoniais, -1)))
+    if doc.cnpj is None:
+        doc.alertas.append("CNPJ não encontrado no cabeçalho.")
+    return doc
+
+
 # --------------------------------------------------------------------------- documento
 
 
 @dataclass
 class DemonstracaoLida:
     tipo: Tipo
-    layout: Literal["sped", "sistema", "grupos"]
+    layout: Literal["sped", "sistema", "grupos", "classificacao", "balancete"]
     entidade: str | None
     cnpj: str | None
     data_fim: date
@@ -367,15 +525,33 @@ def _datas(cabecalho: str) -> tuple[date | None, date | None]:
     if m:
         d1, m1, a1, d2, m2, a2 = map(int, m.groups())
         return date(a1, m1, d1), date(a2, m2, d2)
-    m = re.search(r"(ENCERRADO EM|PERIODO:?\s*\d\d/\d\d/\d{4} A|ATE|EM):?\s*(\d\d)/(\d\d)/(\d{4})", n)
+    m = re.search(r"(ENCERRADO EM|PERIODO:?\s*\d\d/\d\d/\d{4} A|ATE|EM):?\s*(\d\d)/(\d\d)/(\d{4})(?! A \d)", n)
     if m:
         d, mm, a = map(int, m.groups()[1:])
         return None, date(a, mm, d)
+    # "Demonstração do Resultado de 01/01/2024 a 31/12/2024", "Balanço Patrimonial em 01/01/2024 a 31/12/2024"
+    m = re.search(r"(\d\d)/(\d\d)/(\d{4}) A (\d\d)/(\d\d)/(\d{4})", n)
+    if m:
+        d1, m1, a1, d2, m2, a2 = map(int, m.groups())
+        return date(a1, m1, d1), date(a2, m2, d2)
+    # "Período: 01/01/2025 - 31/12/2025" (balancetes)
+    m = re.search(r"(\d\d)/(\d\d)/(\d{4}) ?- ?(\d\d)/(\d\d)/(\d{4})", n)
+    if m:
+        d1, m1, a1, d2, m2, a2 = map(int, m.groups())
+        return date(a1, m1, d1), date(a2, m2, d2)
+    # "Período: 01/2025 a 12/2025" (mês/ano)
+    m = re.search(r"PERIODO:?\s*(\d\d)/(\d{4}) A (\d\d)/(\d{4})", n)
+    if m:
+        m1, a1, m2, a2 = map(int, m.groups())
+        ultimo = (date(a2 + (m2 == 12), m2 % 12 + 1, 1) - date.resolution)
+        return date(a1, m1, 1), ultimo
     return None, None
 
 
 def identificar_tipo(texto_inicial: str) -> Tipo | None:
     n = normalizar_texto(texto_inicial[:600])
+    if re.search(r"\bBALANCETE\b", n):
+        return "balancete"
     if "BALANCO PATRIMONIAL" in n:
         return "balanco"
     if re.search(r"DEMONSTRA\w* D[OE]S? RESULTADO|\bDRE\b", n):
@@ -400,10 +576,17 @@ def ler_demonstracao(caminho: str | Path, linhas: list[Linha] | None = None) -> 
     tipo = identificar_tipo(texto)
     if tipo is None:
         raise DemonstracaoNaoLida("não parece DRE nem Balanço Patrimonial")
+    if tipo == "balancete":
+        if caminho.exists():
+            linhas = ler_linhas_sem_sobreposicao(caminho)
+            texto = "\n".join(t for _, _, t in linhas)
+        return ler_balancete(caminho, linhas, texto[:800])
 
     cabecalho = texto[:800]
     if re.search(r"R\$\s*\(?[\d.]+,\d{2}", texto):
         layout = "sped"
+    elif sum(1 for _, _, t in linhas if _RE_CLASSIFICACAO.match(t)) >= 5:
+        layout = "classificacao"
     elif any(normalizar_texto(lin).endswith("SALDO TOTAL") for lin in cabecalho.splitlines()) or \
             sum(1 for _, _, t in linhas if _RE_CODIGO.match(t)) >= 5:
         layout = "grupos"
@@ -419,8 +602,12 @@ def ler_demonstracao(caminho: str | Path, linhas: list[Linha] | None = None) -> 
     alertas: list[str] = []
     if layout == "grupos":
         contas, alertas = montar_arvore_grupos(linhas)
+    elif layout == "classificacao":
+        contas = montar_arvore_classificacao([t for _, _, t in sorted(linhas, key=lambda l: l[1])], tipo)
     else:
         contas = montar_arvore(linhas, tipo)
+        if tipo == "dre":
+            contas = corrigir_sinais_dre(contas)
     if not contas:
         raise DemonstracaoNaoLida("nenhuma conta com valor reconhecida")
     if tipo == "balanco":
@@ -433,7 +620,7 @@ def ler_demonstracao(caminho: str | Path, linhas: list[Linha] | None = None) -> 
                            data_inicio=inicio, contas=contas, alertas=alertas, gerencial=gerencial)
     confianca = "alta" if not alertas else "media"
     colunas = [(-1, fim.year, "saldo atual")]
-    if layout == "sped" and len(contas[0].valores) == 2:
+    if layout in ("sped", "classificacao") and len(contas[0].valores) == 2:
         colunas.append((0, fim.year - 1, "comparativo (saldo anterior)"))
     if doc.cnpj is None:
         doc.alertas.append("CNPJ não encontrado no cabeçalho.")

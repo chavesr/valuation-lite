@@ -28,6 +28,9 @@ class Tipo(str, Enum):
     RELATORIO_ERP = "relatorio_erp"  # contas a receber/pagar, faturamento por produto, estoque
     EMPRESTIMO = "emprestimo"  # posição/extrato de empréstimo ou financiamento (PDF)
     FOLHA = "folha"  # resumo mensal da folha (só totais da empresa)
+    ENTREVISTA = "entrevista"  # briefing, kick-off, entrevista com o dono (texto livre para a F5)
+    GOOGLE = "google"  # atalho do Google Docs/Planilhas (.gdoc/.gsheet): conteúdo fica na nuvem
+    EXTENSAO_ERRADA = "extensao_errada"  # ex.: planilha Excel salva com extensão .pdf
     SIMPLES = "simples"  # Extrato do PGDAS-D ou DEFIS (PDF)
     RECIBO = "recibo"  # recibo de entrega de declaração (sem dados)
     NOTA_FISCAL = "nota_fiscal"  # DANFE avulsa: os valores vêm do SPED Fiscal
@@ -39,7 +42,7 @@ class Tipo(str, Enum):
     OUTRO = "outro"
 
 
-LIDOS_POR_CODIGO = {Tipo.EXTRATO, Tipo.PLANILHA_ND, Tipo.QUESTIONARIO, Tipo.DEMONSTRACAO, Tipo.GERENCIAL, Tipo.SPED, Tipo.RELATORIO_ERP, Tipo.EMPRESTIMO, Tipo.FOLHA, Tipo.SIMPLES}
+LIDOS_POR_CODIGO = {Tipo.EXTRATO, Tipo.PLANILHA_ND, Tipo.QUESTIONARIO, Tipo.DEMONSTRACAO, Tipo.GERENCIAL, Tipo.SPED, Tipo.RELATORIO_ERP, Tipo.EMPRESTIMO, Tipo.FOLHA, Tipo.SIMPLES, Tipo.ENTREVISTA}
 
 
 class Arquivo(BaseModel):
@@ -141,8 +144,30 @@ def _eh_extrato_planilha(arquivo: Path) -> bool:
         return False
 
 
+def formato_real(arquivo: Path) -> str | None:
+    """Formato pelo conteúdo (assinatura dos primeiros bytes), independente da extensão."""
+    try:
+        with open(arquivo, "rb") as f:
+            inicio = f.read(8)
+    except OSError:
+        return None
+    if inicio.startswith(b"%PDF"):
+        return "pdf"
+    if inicio.startswith(b"PK\x03\x04"):
+        return "zip"  # xlsx, docx, zip
+    if inicio.startswith(b"\xd0\xcf\x11\xe0"):
+        return "ole"  # xls, doc antigos
+    return None
+
+
 def identificar(arquivo: Path) -> Tipo:
+    from captacao.parsers.entrevista import FORMATOS, eh_entrevista
+
     sufixo = arquivo.suffix.lower()
+    if sufixo in {".gdoc", ".gsheet", ".gslides"}:
+        return Tipo.GOOGLE
+    if sufixo in FORMATOS and eh_entrevista(arquivo.name):
+        return Tipo.ENTREVISTA
     if sufixo == ".ofx":
         return Tipo.EXTRATO
     if sufixo == ".csv":
@@ -167,6 +192,8 @@ def identificar(arquivo: Path) -> Tipo:
 
         return Tipo.GERENCIAL if eh_gerencial(arquivo) else Tipo.PLANILHA_OUTRA
     if sufixo == ".pdf":
+        if formato_real(arquivo) in ("zip", "ole"):
+            return Tipo.EXTENSAO_ERRADA
         if re.search(r"FUNCIONARIO|HOLERITE|CONTRACHEQUE|CONTRA-CHEQUE", normalizar_nome(arquivo.name)):
             return Tipo.DADOS_PESSOAIS
         return _tipo_pdf(arquivo)
@@ -204,7 +231,10 @@ def inventariar(pasta_empresa: str | Path) -> list[Arquivo]:
         rel = arq.relative_to(pasta)
         if rel.parts[0] == PASTA_SAIDA or arq.name in {"contas.json", "desktop.ini"} or arq.name.startswith("~$"):
             continue
-        sha = _sha1(arq)
+        try:
+            sha = _sha1(arq)
+        except OSError:  # atalhos do Google no Drive para computador não podem ser lidos como arquivo
+            sha = f"sem-hash:{rel.as_posix()}"
         item = Arquivo(caminho=rel.as_posix(), tipo=identificar(arq), tamanho=arq.stat().st_size, sha1=sha)
         if sha in vistos:
             item.duplicata_de, item.status = vistos[sha], "duplicado"
@@ -220,6 +250,8 @@ def inventariar(pasta_empresa: str | Path) -> list[Arquivo]:
                     Tipo.DADOS_PESSOAIS: "dados individuais de funcionários — não lido (privacidade); usar o resumo da folha",
                     Tipo.COMPACTADO: "arquivo compactado: extrair o conteúdo na pasta",
                     Tipo.PLANILHA_OUTRA: "planilha fora do padrão ND",
+                    Tipo.GOOGLE: "documento Google: baixe como .docx/.xlsx/.pdf para o sistema ler",
+                    Tipo.EXTENSAO_ERRADA: "é planilha/documento do Office salvo com extensão .pdf: renomeie para .xlsx (ou .docx) para o sistema ler",
                 }.get(item.tipo, "formato não utilizado")
         itens.append(item)
     _zips_ja_extraidos(pasta, itens)

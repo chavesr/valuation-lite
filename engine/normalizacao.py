@@ -83,6 +83,11 @@ class DREEconomica(BaseModel):
 
 
 def atividade_principal(dados) -> Atividade:
+    return atividade_evidenciada(dados) or "comercio"
+
+
+def atividade_evidenciada(dados) -> Atividade | None:
+    """Atividade principal quando há evidência (questionário, PGDAS, SPED); None se não houver."""
     q = getattr(dados, "questionario", None)
     if q:
         pcts = {"industria": q.valor("P01a") or 0, "comercio": q.valor("P01b") or 0, "servicos": q.valor("P01c") or 0}
@@ -99,7 +104,7 @@ def atividade_principal(dados) -> Atividade:
     revenda = sum(v for e in efd for c, v in e.por_cfop.items() if c[1:] in {"102", "106", "108", "403", "405"})
     if prod or revenda:
         return "industria" if prod >= revenda else "comercio"
-    return "comercio"
+    return None
 
 
 def _receita_declarada_mensal(dados) -> tuple[dict[str, float], str | None]:

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
@@ -78,6 +79,16 @@ class EstadoCase(BaseModel):
         self.historico.append(Etapa(fase=fase, estado=estado, quando=agora, resumo=resumo))
 
 
+class Entrevista(BaseModel):
+    arquivo: str
+    texto: str  # declarado pelo dono ou anotado pela ND na reunião inicial — não comprovado
+
+
+class Trecho(BaseModel):
+    arquivo: str
+    texto: str  # começo do documento/planilha sem leitor estruturado (para a análise qualitativa)
+
+
 class DadosCase(DadosBrutos):
     """dados_brutos.json: DadosBrutos + o que veio do questionário e da Planilha ND."""
 
@@ -92,6 +103,8 @@ class DadosCase(DadosBrutos):
     folha: list[FolhaMes] = Field(default_factory=list)  # resumo mensal da folha (totais)
     defis: list[DEFISAnual] = Field(default_factory=list)  # declaração anual do Simples
     simples: dict | None = None  # resumo do PGDAS-D mais recente (RBT12, limites, atividades, DAS)
+    entrevistas: list[Entrevista] = Field(default_factory=list)  # briefing / kick-off / entrevista (texto)
+    outros_documentos: list[Trecho] = Field(default_factory=list)  # certidões, contratos, licenças, planilhas
     alertas: list[str] = Field(default_factory=list)
 
 
@@ -573,6 +586,39 @@ def _periodo(extratos: list[ExtratoConta], pgdas: list[PGDASMes], planilha: Plan
     return _mes_menos(fim, meses - 1), fim
 
 
+_RE_PESSOAL = re.compile(r"\bCNH\b|\bRG\b|\bCPF\b|IRPF|HOLERITE|CONTRACHEQUE|FUNCIONARI|COLABORADOR|"
+                         r"EMPREGADO|FOLHA DE PAGAMENTO|DECLARACAO DE AJUSTE|CERTIDAO DE (NASCIMENTO|CASAMENTO)")
+LIMITE_TRECHO = 2000
+
+
+def _trecho(arquivo: Path) -> str | None:
+    """Começo do texto de um PDF ou das primeiras linhas de uma planilha; None se não houver texto."""
+    try:
+        if arquivo.suffix.lower() == ".pdf":
+            import pdfplumber
+
+            with pdfplumber.open(arquivo) as pdf:
+                texto = "\n".join((p.extract_text() or "") for p in pdf.pages[:2])
+        elif arquivo.suffix.lower() in {".xlsx", ".xlsm"}:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(arquivo, read_only=True, data_only=True)
+            linhas = []
+            for ws in wb.worksheets[:3]:
+                linhas.append(f"[aba {ws.title}]")
+                for row in ws.iter_rows(max_row=40, values_only=True):
+                    vals = [str(v) for v in row if v not in (None, "")]
+                    if vals:
+                        linhas.append(" | ".join(vals))
+            texto = "\n".join(linhas)
+        else:
+            return None
+    except Exception:  # noqa: BLE001 — arquivo protegido ou corrompido: fica só como não lido
+        return None
+    texto = re.sub(r"\n{3,}", "\n\n", texto).strip()
+    return texto[:LIMITE_TRECHO] if len(texto) >= 80 else None
+
+
 def _no_periodo(itens: list, inicio: str, fim: str, campo: str = "competencia") -> list:
     return [i for i in itens if inicio <= getattr(i, campo) <= fim]
 
@@ -658,6 +704,27 @@ def captar(pasta: Path, inventario: list[Arquivo], fim: str | None = None, meses
             continue
         a.status, a.detalhe = "lido", f"folha {meses_folha[0].competencia} a {meses_folha[-1].competencia}"
         folha += meses_folha
+
+    entrevistas: list[Entrevista] = []
+    for a in [a for a in ativos if a.tipo == Tipo.ENTREVISTA]:
+        from captacao.parsers.entrevista import EntrevistaNaoLida, extrair_texto
+
+        try:
+            texto = extrair_texto(pasta / a.caminho)
+        except (EntrevistaNaoLida, OSError) as erro:
+            a.status, a.detalhe = "erro", str(erro)
+            continue
+        a.status, a.detalhe = "lido", f"entrevista/briefing: {len(texto):,} caracteres".replace(",", ".")
+        entrevistas.append(Entrevista(arquivo=a.caminho, texto=texto))
+
+    outros: list[Trecho] = []
+    for a in [a for a in ativos if a.tipo in (Tipo.PDF, Tipo.PLANILHA_OUTRA) and a.status == "não lido"]:
+        if _RE_PESSOAL.search(normalizar_texto(a.caminho)):
+            continue  # documento pessoal ou de funcionários: não sai da pasta (privacidade)
+        texto = _trecho(pasta / a.caminho)
+        if texto:
+            outros.append(Trecho(arquivo=a.caminho, texto=texto))
+            a.detalhe = f"{a.detalhe} (trecho enviado à análise qualitativa)"
 
     apuracoes: list[ApuracaoPGDAS] = []
     defis: list[DEFISAnual] = []
@@ -804,6 +871,7 @@ def captar(pasta: Path, inventario: list[Arquivo], fim: str | None = None, meses
         dividas=dividas,
         folha=folha,
         defis=defis, simples=resumo_simples,
+        entrevistas=entrevistas, outros_documentos=outros,
         alertas=alertas,
     )
 

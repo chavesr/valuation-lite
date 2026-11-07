@@ -1,7 +1,7 @@
-"""Notas do Score de Risco (1 = risco mínimo … 5 = máximo) a partir dos dados do case.
+"""Notas do Score de Risco (escala da ND: 5 = melhor/risco mínimo … 1 = pior/risco máximo) a partir dos dados do case.
 
 Dimensões objetivas são calculadas por código. Dimensões de julgamento usam o questionário quando houver
-resposta; sem informação, recebem nota NEUTRA (3) marcada como pendente — "não sei" não é "arriscado"; a taxa
+resposta; sem informação, recebem nota NEUTRA (3) marcada como pendente — "não sei" não é "ruim"; a taxa
 fica provisória, com a faixa possível mostrada no relatório (Checkpoint: o analista — e, mais
 tarde, o agente da F5 — decide em _valuation/score_notas.json).
 """
@@ -26,7 +26,7 @@ class NotaDimensao(BaseModel):
 
 
 def _faixa(valor: float, limites: list[float]) -> int:
-    """limites crescentes de risco → nota 1..5 (valor ≤ limites[i] → nota i+1)."""
+    """limites crescentes → nível 1..5 (valor ≤ limites[i] → nível i+1). Nível alto = valor alto, não nota."""
     for i, lim in enumerate(limites):
         if valor <= lim:
             return i + 1
@@ -66,13 +66,13 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
     if gci:
         put("confiabilidade_informacao", nota_gci(gci.indice, gci.nivel), "código", f"GCI {gci.indice:.1f}, nível {gci.nivel}")
     else:
-        put("confiabilidade_informacao", 4, "sem informação", "GCI não calculado (sem extratos nem fonte fiscal)", True)
+        put("confiabilidade_informacao", 2, "sem informação", "GCI não calculado (sem extratos nem fonte fiscal)", True)
 
     # 2. dependência do dono
     q08 = q.valor("Q08") if q else None
-    mapa = {"Funcionaria normalmente": 1, "Funcionaria com perda pequena": 2, "Perderia vendas relevantes": 4, "Pararia": 5}
+    mapa = {"Funcionaria normalmente": 5, "Funcionaria com perda pequena": 4, "Perderia vendas relevantes": 2, "Pararia": 1}
     if q08 in mapa:
-        n = mapa[q08] - (1 if q and q.valor("Q09a") == "Sim" and mapa[q08] > 1 else 0)
+        n = mapa[q08] + (1 if q and q.valor("Q09a") == "Sim" and mapa[q08] < 5 else 0)
         put("dependencia_dono", n, "questionário", f"Q08 '{q08}'; gerente com autonomia: {q.valor('Q09a') or '?'}", True)
     else:
         put("dependencia_dono", 3, "sem informação (neutra)", "sem resposta do questionário (Q08/Q09) nem entrevista", True)
@@ -89,14 +89,14 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
     else:
         maior, fonte = None, None
     if maior is not None:
-        put("concentracao_clientes", _faixa(maior, [0.05, 0.10, 0.20, 0.35]), "código", f"maior cliente {maior:.1%} ({fonte})")
+        put("concentracao_clientes", 6 - _faixa(maior, [0.05, 0.10, 0.20, 0.35]), "código", f"maior cliente {maior:.1%} ({fonte})")
     else:
         put("concentracao_clientes", 3, "sem informação (neutra)", "sem dado de clientes", True)
 
     # 4. recorrência
     q13 = q.valor("Q13") if q else None
     if isinstance(q13, (int, float)):
-        put("recorrencia_receita", 6 - _faixa(q13 / 100, [0.10, 0.30, 0.50, 0.70]) if q13 < 100 else 1, "questionário",
+        put("recorrencia_receita", _faixa(q13 / 100, [0.10, 0.30, 0.50, 0.70]) if q13 < 100 else 5, "questionário",
             f"{q13:.0f}% da receita recorrente (Q13)", True)
     else:
         put("recorrencia_receita", 3, "sem informação (neutra)", "sem informação de contratos/recorrência", True)
@@ -110,7 +110,7 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
         inicio = date.fromisoformat(str(abertura)).year
     if inicio:
         anos = date.today().year - inicio
-        put("historico_mercado", 6 - _faixa(anos, [3, 5, 10, 20]) if anos < 21 else 1, "código", f"{anos} anos de operação")
+        put("historico_mercado", _faixa(anos, [3, 5, 10, 20]) if anos < 21 else 5, "código", f"{anos} anos de operação")
     else:
         put("historico_mercado", 3, "sem informação (neutra)", "data de início não informada", True)
 
@@ -119,9 +119,9 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
         [d.margem_ebitda for d in dres if d.margem_ebitda is not None]
     if len(margens) >= 2:
         amplitude = max(margens) - min(margens)
-        n = _faixa(amplitude, [0.03, 0.06, 0.10, 0.15])
+        n = 6 - _faixa(amplitude, [0.03, 0.06, 0.10, 0.15])
         if min(margens) < 0:
-            n = max(n, 4)
+            n = min(n, 2)
         put("estabilidade_resultados", n, "código", f"margem EBITDA entre {min(margens):.1%} e {max(margens):.1%}")
     else:
         put("estabilidade_resultados", 3, "sem informação (neutra)", "menos de 2 períodos comparáveis", True)
@@ -131,10 +131,10 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
     ebitda = base.ebitda if base else 0.0
     if ebitda > 0:
         alav = (bruta - caixa) / ebitda
-        put("endividamento_liquidez", _faixa(alav, [0.5, 1.5, 2.5, 3.5]), "código",
+        put("endividamento_liquidez", 6 - _faixa(alav, [0.5, 1.5, 2.5, 3.5]), "código",
             f"dívida líquida/EBITDA {alav:.1f}× (dívida R$ {bruta:,.0f}, caixa R$ {caixa:,.0f}; {fonte})".replace(",", "."))
     else:
-        put("endividamento_liquidez", 5, "código", "EBITDA econômico ≤ 0")
+        put("endividamento_liquidez", 1, "código", "EBITDA econômico ≤ 0")
 
     # 8. contingências (proposta por código; julgamento final do analista)
     sinais = []
@@ -154,10 +154,25 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
         sinais.append("dívida fora do Balanço")
     if q and q.valor("Q24") == "Não, parte é recebida sem nota":
         sinais.append("venda sem nota (declarada no questionário)")
-    put("contingencias", min(5, 1 + len(sinais)), "código", "; ".join(sinais) or "nenhum sinal nos documentos", True)
+    put("contingencias", max(1, 5 - len(sinais)), "código", "; ".join(sinais) or "nenhum sinal nos documentos", True)
 
     # 9. setor e posição competitiva — julgamento (F5)
     put("setor_posicao_competitiva", 3, "sem informação (neutra)", "aguarda análise qualitativa (F5) / analista", True)
 
     assert set(notas) == set(PESOS)
     return notas
+
+
+def aplicar_qualitativo(notas: dict[str, NotaDimensao], notas_f5: list[dict]) -> None:
+    """Notas propostas pela F5 (qualitativo.json) substituem as de questionário/padrão nas dimensões de julgamento.
+    Continuam pendentes (taxa provisória) até o analista aprovar com origem "analista" em score_notas.json."""
+    for n in notas_f5:
+        dim = n["dimensao"]
+        if dim not in notas:
+            continue
+        atual = notas[dim]
+        evid = f"{n['justificativa']} [{n['confianca']}]"
+        if atual.origem == "código":
+            evid += f" · código: {atual.evidencia}"
+        notas[dim] = NotaDimensao(dimensao=dim, nota=int(n["nota"]), origem="F5 (proposta)", evidencia=evid,
+                                  pendente=True)

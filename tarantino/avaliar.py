@@ -14,7 +14,7 @@ from captacao.util import brl
 from engine.gci import ResultadoGCI
 from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
-from engine.score_case import NotaDimensao, propor_notas
+from engine.score_case import NotaDimensao, aplicar_qualitativo, propor_notas
 from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
 from market_data.selic import selic_atual
 from tarantino.case import DadosCase, ler_estado
@@ -94,6 +94,8 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None) -> Resul
 
     base = next((d for d in dres if d.confianca != "baixa"), dres[0])
     notas = propor_notas(dados, gci, dres, base)
+    if (saida / "qualitativo.json").exists():  # F5: notas propostas pelo agente
+        aplicar_qualitativo(notas, json.loads((saida / "qualitativo.json").read_text(encoding="utf-8"))["notas_score"])
     arq_notas = saida / "score_notas.json"
     decididas = json.loads(arq_notas.read_text(encoding="utf-8")) if arq_notas.exists() else {}
     for dim, d in decididas.items():  # o analista prevalece

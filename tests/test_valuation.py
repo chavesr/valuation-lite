@@ -38,7 +38,7 @@ def test_valuation_ponta_a_ponta_com_divida_e_piso():
     dres = normalizar(dados)
     base = dres[0]
     notas = propor_notas(dados, None, dres, base)
-    assert notas["confiabilidade_informacao"].nota == 4 and notas["confiabilidade_informacao"].pendente
+    assert notas["confiabilidade_informacao"].nota == 2 and notas["confiabilidade_informacao"].pendente
     assert notas["setor_posicao_competitiva"].pendente
     risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1375)
     r = avaliar(dados, dres, None, risco, notas)

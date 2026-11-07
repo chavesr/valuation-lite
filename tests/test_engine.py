@@ -49,8 +49,8 @@ def test_taxa_desconto(score, selic, taxa, premio):
 
 
 def test_score_horizonte_e_perpetuidade():
-    baixo = avaliar_risco({d: 1 for d in PESOS}, selic=0.15)
-    alto = avaliar_risco({d: 5 for d in PESOS}, selic=0.15)
+    baixo = avaliar_risco({d: 5 for d in PESOS}, selic=0.15)  # 5 = melhor nota → menor risco
+    alto = avaliar_risco({d: 1 for d in PESOS}, selic=0.15)
     assert (baixo.score, baixo.horizonte_anos, baixo.perpetuidade_permitida_pelo_score) == (0, 5, True)
     assert (alto.score, alto.horizonte_anos, alto.perpetuidade_permitida_pelo_score) == (100, 3, False)
     with pytest.raises(ValueError):
@@ -60,6 +60,6 @@ def test_score_horizonte_e_perpetuidade():
 def test_sanidade_multiplo_e_nota_gci():
     assert fator_anuidade(0.20, 5) == pytest.approx(2.99, abs=0.01)
     assert fator_anuidade(0.35, 3) == pytest.approx(1.70, abs=0.01)
-    assert (nota_gci(90), nota_gci(70), nota_gci(40)) == (1, 3, 5)
-    assert nota_gci(68.9, "C") == 4  # caso Charlie: nível C impõe nota mínima
+    assert (nota_gci(90), nota_gci(70), nota_gci(40)) == (5, 3, 1)
+    assert nota_gci(68.9, "C") == 2  # caso Charlie: nível C impõe nota máxima
     assert nota_gci(80, "B") == 3

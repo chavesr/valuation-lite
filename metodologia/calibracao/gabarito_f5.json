@@ -1,0 +1,38 @@
+{
+  "_nota": "Gabarito de calibração da F5 (escala ND: 5 = melhor … 1 = pior), validado por Guilherme Chaves em 07/11/2026. A pasta de documentos de cada caso fica em cases/calibracao.json (fora do git).",
+  "casos": {
+    "R1": {
+      "dependencia_dono": 3,
+      "recorrencia_receita": 2,
+      "contingencias": 1,
+      "setor_posicao_competitiva": 3
+    },
+    "R2": {
+      "dependencia_dono": 2,
+      "recorrencia_receita": 3,
+      "contingencias": 3,
+      "setor_posicao_competitiva": 2
+    },
+    "R3": {
+      "dependencia_dono": 2,
+      "recorrencia_receita": 3,
+      "contingencias": 2,
+      "setor_posicao_competitiva": 4
+    },
+    "R4": {
+      "dependencia_dono": 3,
+      "recorrencia_receita": 4,
+      "contingencias": 1,
+      "setor_posicao_competitiva": 2
+    },
+    "R5": {
+      "dependencia_dono": 2,
+      "recorrencia_receita": 2,
+      "contingencias": 1,
+      "setor_posicao_competitiva": 3
+    }
+  },
+  "_revisoes": [
+    "2026-11-07: R5 contingências 3 → 1 (DRE contábil 4–10% da gerencial; decisão de Guilherme Chaves)"
+  ]
+}
