@@ -113,3 +113,39 @@ def test_d4_regua_da_casa_e_payback_do_preco():
     assert m["anos"] == 2.5 and m["valor_empresa"] == pytest.approx(2.5 * r.fluxo_base, abs=0.01)
     assert m["valor_patrimonio"] == pytest.approx(m["valor_empresa"] - descontos, abs=0.01)
     assert r.payback_preco == pytest.approx((r.preco_recomendado + descontos) / r.fluxo_base, abs=0.01)
+
+
+def test_d5_patrimonio_a_mercado_e_em_liquidacao():
+    import datetime
+
+    dados = _dados()
+    dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
+                                   caixa_aplicacoes=100_000, contas_receber=200_000, estoques=300_000,
+                                   imobilizado_liquido=100_000, fornecedores=150_000, emprestimos_lp=400_000,
+                                   proveniencia=PROV)]
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094)
+    liq = avaliar(dados, dres, None, risco, notas)
+    merc = avaliar(dados, dres, None, risco, notas, None, None, "mercado")
+    # mercado: 100 + 0,95×200 + 0,9×300 + 1,0×100 − 150 − 400 = +110 mil; liquidação = −100 mil
+    assert liq.patrimonio_mercado == pytest.approx(110_000) and liq.piso_patrimonial == pytest.approx(-100_000)
+    assert (liq.piso_usado, merc.piso_usado) == ("liquidacao", "mercado")
+    assert merc.preco_recomendado >= 110_000 - 0.01  # o piso a mercado vira o mínimo do preço
+
+
+def test_d5_valor_de_oferta_pelos_ativos_brutos_e_ponte_para_o_dono():
+    import datetime
+
+    dados = _dados()
+    dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
+                                   caixa_aplicacoes=100_000, contas_receber=200_000, estoques=9_000_000,
+                                   imobilizado_liquido=100_000, fornecedores=150_000, emprestimos_lp=400_000,
+                                   proveniencia=PROV)]
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    r = avaliar(dados, dres, None, avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094), notas)
+    ativos = 100_000 + 0.95 * 200_000 + 0.9 * 9_000_000 + 100_000  # brutos: sem descontar passivos
+    assert r.ativos_mercado == pytest.approx(ativos)
+    assert r.valor_oferta == pytest.approx(ativos) and r.valor_oferta_origem == "ativos a mercado"
+    assert r.ponte_dono[-1] == ("= Sobra para o dono", pytest.approx(ativos - 150_000 - 400_000))

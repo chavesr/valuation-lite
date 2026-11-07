@@ -386,10 +386,14 @@ def mapear_balanco(raizes: list[Conta], idx: int) -> dict:
     parcel = [c for c in (_primeira(pc, r"PARCELAMENT"), _primeira(pnc, r"PARCELAMENT")) if c]
     mutuos = [c for c in (_primeira(pc, r"SOCIOS|MUTUO|PESSOAS LIGADAS"),
                           _primeira(pnc, r"SOCIOS|MUTUO|PESSOAS LIGADAS")) if c]
+    receber = _valor(_primeira(ac, r"^CLIENTES|^DUPLICATAS A RECEBER|^CONTAS A RECEBER|^CREDITOS? DE CLIENTES"), idx)
+    estoques = _valor(_primeira(ac, r"^ESTOQUES?"), idx)
+    if receber is None and estoques is None:  # balanço resumido: recebíveis e estoques numa linha só
+        receber = _valor(_primeira(ac, r"^DIREITOS REALIZAVEIS|^REALIZAVEL A CURTO PRAZO|^CREDITOS$"), idx)
     return {
         "caixa_aplicacoes": _valor(_primeira(ac, r"^DISPONI|^CAIXA E EQUIVALENTES"), idx),
-        "contas_receber": _valor(_primeira(ac, r"^CLIENTES|^DUPLICATAS A RECEBER|^CONTAS A RECEBER|^CREDITOS? DE CLIENTES"), idx),
-        "estoques": _valor(_primeira(ac, r"^ESTOQUES?"), idx),
+        "contas_receber": receber,
+        "estoques": estoques,
         "imobilizado_liquido": _valor(_primeira(anc, r"^IMOBILIZADO"), idx),
         "fornecedores": _valor(_primeira(pc, r"^FORNECEDORES"), idx),
         "obrigacoes_trabalhistas": _valor(_primeira(pc, r"TRABALHIST|^OBRIGACOES SOCIAIS"), idx),

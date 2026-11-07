@@ -64,6 +64,13 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     if r.retencao_sugerida:
         linhas.append(f"- **Retenção sugerida no fechamento: R$ {brl(r.retencao_sugerida, 0)}** (não reduz o preço; "
                       "`contingencias_decisoes.json` para reclassificar)")
+    if r.valor_oferta is not None:
+        linhas += ["", "## Valor de referência (teto para a oferta na rede) e ponte para o dono", "",
+                   f"Maior entre o valor da empresa pelo fluxo e os ativos a mercado (critério da ND): **R$ "
+                   f"{brl(r.valor_oferta, 0)}** — vem de {r.valor_oferta_origem}. É o teto para ofertar; o alvo "
+                   f"da negociação é o preço recomendado (R$ {brl(r.preco_recomendado, 0)}).", "",
+                   "| Ponte | R$ |", "|---|---:|"]
+        linhas += [f"| {nome} | {brl(v, 0)} |" for nome, v in r.ponte_dono]
     if r.regua_payback:
         nomes = {"forcada": "Venda forçada", "mercado": "Mercado", "maximo": "Máximo (régua da casa)"}
         linhas += ["", "## Conferência: régua da casa (payback)", "",
@@ -75,9 +82,15 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
                           f"{brl(v['valor_patrimonio'], 0)} |")
         linhas.append(f"\nO preço recomendado (R$ {brl(r.preco_recomendado, 0)}) se paga em "
                       f"**{r.payback_preco:.2f} anos** de fluxo.")
+    usado = " ← **piso do preço** (`valuation_decisoes.json`)"
     linhas += ["", "## Referências",
-               f"- Piso patrimonial (liquidação ordenada): R$ {brl(r.piso_patrimonial, 0)}" if r.piso_patrimonial is not None
-               else "- Piso patrimonial: sem Balanço",
+               f"- Patrimônio em liquidação ordenada (venda forçada): R$ {brl(r.piso_patrimonial, 0)}"
+               f"{usado if r.piso_usado == 'liquidacao' else ''}" if r.piso_patrimonial is not None
+               else "- Patrimônio: sem Balanço",
+               f"- Ativos a mercado (brutos, sem descontar passivos): R$ {brl(r.ativos_mercado, 0)}"
+               if r.ativos_mercado is not None else "",
+               f"- Patrimônio a mercado (ativos a mercado − passivos): R$ {brl(r.patrimonio_mercado, 0)}"
+               f"{usado if r.piso_usado == 'mercado' else ''}" if r.patrimonio_mercado is not None else "",
                f"- EPV (sem crescimento, perpetuidade — só referência): R$ {brl(r.epv, 0)}" if r.epv is not None else "- EPV: —"]
     if r.multiplo_ebitda:
         linhas.append(f"- Checagem por múltiplo de EBITDA (3–5×): R$ {brl(r.multiplo_ebitda['min'], 0)} a "
@@ -144,7 +157,13 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
                              f"python -m tarantino avaliar \"{pasta}\" --atualizar-mercado")
     arq_cont = saida / "contingencias_decisoes.json"
     dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
-    resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont)
+    arq_val = saida / "valuation_decisoes.json"
+    dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
+    dec_val.setdefault("piso", "liquidacao")
+    dec_val.setdefault("_leia", "piso: liquidacao (ativos em venda forçada; padrão, mais conservador) | mercado "
+                                 "(ativos a valor de mercado, critério da ND). Define o valor mínimo do preço.")
+    arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
+    resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"])
     if aviso_mercado:
         resultado.alertas.insert(0, aviso_mercado)
     resultado.aviso_mercado = aviso_mercado

@@ -226,3 +226,16 @@ def test_balancete_gera_dre_e_balanco():
     assert (d.despesas_pessoal, d.aluguel, d.lucro_liquido) == (-500, -200, 300)
     assert (b.caixa_aplicacoes, b.fornecedores, b.patrimonio_liquido) == (600, 200, 400)
     assert any("sem conta de custo" in a for a in doc.alertas)
+
+
+def test_balanco_resumido_usa_direitos_realizaveis_como_recebiveis():
+    from captacao.parsers.demonstracoes_pdf import ler_demonstracao
+
+    bp = ler_demonstracao("bp_resumido.pdf", _linhas([
+        "BALANÇO PATRIMONIAL DE 01/01/2025 A 31/12/2025 Página: 1", "CNPJ:11.222.333/0001-81",
+        "Código Classificação Nome Saldo atual",
+        "1 01 ATIVO 900,00D", "2 01.1 ATIVO CIRCULANTE 900,00D", "3 01.1.1 DISPONIBILIDADES 100,00D",
+        "14 01.1.2 DIREITOS REALIZÁVEIS A CURTO PRAZO 800,00D",
+        "10 02 PASSIVO 900,00C", "11 02.1 PASSIVO CIRCULANTE 300,00C", "12 02.1.1 FORNECEDORES 300,00C",
+        "13 02.3 PATRIMÔNIO LÍQUIDO 600,00C", "14 02.3.1 CAPITAL 600,00C"]))
+    assert bp.balancos[0].contas_receber == 800 and bp.balancos[0].estoques is None

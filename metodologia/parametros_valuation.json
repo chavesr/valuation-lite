@@ -39,7 +39,7 @@
     "dependencia_dono_nota_minima": 4
   },
   "piso_patrimonial": {
-    "origem": "a calibrar: % do valor contábil realizável numa liquidação ordenada",
+    "origem": "a calibrar: % do valor contábil realizável numa liquidação ordenada (venda forçada); padrão do piso do preço",
     "caixa": 1.0,
     "contas_receber": 0.8,
     "estoques": 0.5,
@@ -88,5 +88,12 @@
     "forcada": 1.5,
     "mercado": 2.5,
     "maximo": 3.0
+  },
+  "patrimonio_mercado": {
+    "origem": "validado 07/11/2026: % do valor contábil dos ativos num negócio normal (critério da ND). Os ATIVOS a mercado (brutos, sem descontar passivos) definem o valor de oferta na rede = maior entre DCF e ativos; passivos e dívidas saem depois, na ponte para o dono",
+    "caixa": 1.0,
+    "contas_receber": 0.95,
+    "estoques": 0.9,
+    "imobilizado": 1.0
   }
 }

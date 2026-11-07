@@ -80,7 +80,13 @@ class ResultadoValuation(BaseModel):
     aviso_mercado: str | None = None  # Selic mudou desde a fotografia do case (o analista decide se atualiza)
     regua_payback: dict[str, dict[str, float]] = Field(default_factory=dict)  # régua da casa (conferência)
     payback_preco: float | None = None  # anos de fluxo para pagar o preço recomendado + dívida + prováveis
-    piso_patrimonial: float | None = None
+    piso_patrimonial: float | None = None  # ativos em liquidação ordenada − passivos (venda forçada)
+    patrimonio_mercado: float | None = None  # ativos a valor de mercado − passivos (critério da ND)
+    piso_usado: str = "liquidacao"  # qual dos dois serve de piso do preço (escolha do analista por case)
+    ativos_mercado: float | None = None  # ativos brutos a mercado, sem descontar passivos (critério da ND)
+    valor_oferta: float | None = None  # maior entre valor da empresa (DCF base) e ativos a mercado
+    valor_oferta_origem: str | None = None  # "fluxo (DCF)" ou "ativos a mercado"
+    ponte_dono: list[tuple[str, float]] = Field(default_factory=list)  # do valor de oferta ao que sobra ao dono
     epv: float | None = None
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
     cenarios: list[Cenario] = Field(default_factory=list)
@@ -123,7 +129,7 @@ def crescimento_historico(dres: list[DREEconomica]) -> float | None:
     return round((b / a) ** (1 / n) - 1, 4)
 
 
-def liquidacao(dados, p: dict) -> tuple[float | None, float | None]:
+def liquidacao(dados, p: dict, criterio: str = "piso_patrimonial") -> tuple[float | None, float | None]:
     """→ (piso patrimonial, valor de liquidação dos ativos operacionais).
     Piso = ativos a valor de realização − todos os passivos conhecidos (valor mínimo para o sócio hoje).
     Operacional = recebíveis + estoque + imobilizado a valor de realização − fornecedores e obrigações (sem caixa nem
@@ -131,13 +137,28 @@ def liquidacao(dados, p: dict) -> tuple[float | None, float | None]:
     bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
     if not bp:
         return None, None
-    h = p["piso_patrimonial"]
+    h = p[criterio]
     operacionais = ((bp.contas_receber or 0) * h["contas_receber"] + (bp.estoques or 0) * h["estoques"]
                     + (bp.imobilizado_liquido or 0) * h["imobilizado"])
     passivos_op = sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_trabalhistas, bp.obrigacoes_fiscais))
     dividas = sum(x or 0 for x in (bp.parcelamentos_fiscais, bp.emprestimos_cp, bp.emprestimos_lp, bp.mutuos_socios))
     piso = (bp.caixa_aplicacoes or 0) * h["caixa"] + operacionais - passivos_op - dividas
     return round(piso, 2), round(max(operacionais - passivos_op, 0.0), 2)
+
+
+def ativos_brutos(dados, p: dict, criterio: str = "patrimonio_mercado") -> float | None:
+    """Caixa + recebíveis + estoque + imobilizado a valor de mercado, SEM descontar passivos (critério da ND)."""
+    bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
+    if not bp:
+        return None
+    h = p[criterio]
+    return round((bp.caixa_aplicacoes or 0) * h["caixa"] + (bp.contas_receber or 0) * h["contas_receber"]
+                 + (bp.estoques or 0) * h["estoques"] + (bp.imobilizado_liquido or 0) * h["imobilizado"], 2)
+
+
+def passivos_operacionais(dados) -> float:
+    bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
+    return sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_trabalhistas, bp.obrigacoes_fiscais)) if bp else 0.0
 
 
 def carga_efetiva_atual(dados, base: DREEconomica) -> tuple[float, str]:
@@ -220,14 +241,17 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 
 
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
-            p: dict | None = None, decisoes_contingencias: dict | None = None) -> ResultadoValuation:
+            p: dict | None = None, decisoes_contingencias: dict | None = None,
+            piso_escolhido: str = "liquidacao") -> ResultadoValuation:
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
     perp, motivo = teste_perpetuidade(dados, notas, risco, gci, p)
     bruta, caixa, fonte_div = divida_liquida(dados)
     conts = contingencias(dados, base, p, decisoes_contingencias)
-    piso, liquidacao_operacional = liquidacao(dados, p)
+    piso_liq, liquidacao_operacional = liquidacao(dados, p)
+    piso_merc, _ = liquidacao(dados, p, "patrimonio_mercado")
+    piso = piso_merc if piso_escolhido == "mercado" and piso_merc is not None else piso_liq
     ajuste_patrimonio = -(bruta - caixa) - sum(c.valor for c in conts)
     cr = p["crescimento"]
     g_base = min(max(hist or 0.0, 0.0) * cr["base_fracao_do_historico"], cr["base_teto"])
@@ -237,7 +261,10 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     r = ResultadoValuation(periodo_base=base.periodo, fluxo_base=fluxo, fluxo_fonte=fonte, ebitda_base=base.ebitda,
                            receita_base=base.valor("Receita bruta"), crescimento_historico=hist, risco=risco, notas=notas,
                            perpetuidade=perp, perpetuidade_motivo=motivo, divida_bruta=bruta, caixa=caixa,
-                           divida_fonte=fonte_div, contingencias=conts, piso_patrimonial=piso,
+                           divida_fonte=fonte_div, contingencias=conts, piso_patrimonial=piso_liq,
+                           patrimonio_mercado=piso_merc,
+                           piso_usado="mercado" if piso is not None and piso == piso_merc and piso_escolhido == "mercado"
+                           else "liquidacao",
                            retencao_sugerida=round(sum(c.retencao for c in conts), 2))
     ativos_liquidos = liquidacao_operacional or 0.0  # valor terminal (firma) no cenário base/otimista
     mult_vt = p["valor_terminal"]["multiplo_do_fluxo"]
@@ -268,6 +295,30 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
 
     valor_base = max(base_c.valor_patrimonio, piso or float("-inf")) if piso is not None else base_c.valor_patrimonio
     r.preco_recomendado = round(max(valor_base * (1 - p["margem_de_seguranca"]["percentual"]), piso or 0.0, 0.0), 2)
+
+    # valor de oferta na rede (ND): maior entre o valor da empresa pelo fluxo e os ativos brutos a mercado
+    r.ativos_mercado = ativos_brutos(dados, p)
+    provaveis = sum(c.valor for c in conts)
+    if r.ativos_mercado is not None and r.ativos_mercado > base_c.valor_empresa:
+        r.valor_oferta, r.valor_oferta_origem = r.ativos_mercado, "ativos a mercado"
+        r.ponte_dono = [("Ativos a mercado (inclui o caixa)", r.ativos_mercado),
+                        ("(−) Fornecedores e obrigações", -passivos_operacionais(dados)),
+                        ("(−) Dívida bruta", -bruta)]
+    else:
+        r.valor_oferta, r.valor_oferta_origem = base_c.valor_empresa, "fluxo (DCF)"
+        r.ponte_dono = [("Valor da empresa pelo fluxo (DCF base)", base_c.valor_empresa),
+                        ("(−) Dívida líquida (dívida − caixa)", -(bruta - caixa))]
+    if provaveis:
+        r.ponte_dono.append(("(−) Contingências prováveis", -provaveis))
+    bp_ult = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
+    if r.valor_oferta_origem == "ativos a mercado" and bp_ult and r.ativos_mercado:
+        peso = (bp_ult.estoques or 0) * p["patrimonio_mercado"]["estoques"] / r.ativos_mercado
+        if peso >= 0.5:
+            r.alertas.append(f"Valor de referência vem dos ativos e o estoque é {peso:.0%} deles: confirmar estoque "
+                             "físico e valor de realização antes de ofertar (balanço reapresentado infla estoque).")
+    r.ponte_dono.append(("= Sobra para o dono", round(sum(v for _, v in r.ponte_dono), 2)))
+    if r.retencao_sugerida:
+        r.ponte_dono.append(("(retido no fechamento até a contingência possível prescrever)", -r.retencao_sugerida))
 
     # régua da casa (payback): valor da empresa = anos × fluxo; patrimônio = empresa − dívida líquida − prováveis
     rp = p["regua_payback"]
