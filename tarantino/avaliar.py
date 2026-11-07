@@ -16,7 +16,7 @@ from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
 from engine.score_case import NotaDimensao, aplicar_qualitativo, propor_notas
 from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
-from tarantino.mercado import DadoIndisponivel, obter_mercado, selic_por_horizonte
+from tarantino.mercado import DadoIndisponivel, mudancas, obter_mercado, selic_por_horizonte
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
 
@@ -111,19 +111,32 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
 
     fonte_selic = "informada"
     ref: float | dict[int, float] = selic if selic is not None else 0.0
+    foto = painel = None
     if selic is None:
         try:
-            painel = obter_mercado(pasta, atualizar_mercado)
-            ref, fontes = selic_por_horizonte(painel)
+            foto, painel = obter_mercado(pasta, atualizar_mercado)
+            ref, fontes = selic_por_horizonte(foto)
         except DadoIndisponivel:
             ref, fontes = p["selic_padrao"]["valor"], None
             fonte_selic = "valor padrão dos parâmetros (sem Focus nem Selic meta)"
     risco = avaliar_risco({k: v.nota for k, v in notas.items()}, ref)
     if selic is None and fontes:
         fonte_selic = fontes[risco.horizonte_anos]
+    aviso_mercado = None
+    if foto and painel:
+        mudou = mudancas(foto, painel, risco.horizonte_anos)
+        if mudou:
+            nova = avaliar_risco({k: v.nota for k, v in notas.items()}, selic_por_horizonte(painel)[0])
+            aviso_mercado = (f"Mercado mudou desde a fotografia deste case ({foto['coletado_em']}): "
+                             f"{'; '.join(mudou)}. Taxa iria de {risco.taxa_desconto:.1%} para "
+                             f"{nova.taxa_desconto:.1%}. Para usar os números novos: "
+                             f"python -m tarantino avaliar \"{pasta}\" --atualizar-mercado")
     arq_cont = saida / "contingencias_decisoes.json"
     dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont)
+    if aviso_mercado:
+        resultado.alertas.insert(0, aviso_mercado)
+    resultado.aviso_mercado = aviso_mercado
     for c in resultado.contingencias:  # Checkpoint: o analista reclassifica, corrige ou acrescenta
         dec_cont.setdefault(c.id, {"descricao": c.descricao, "valor_calculado": c.valor_bruto,
                                    "classificacao": None, "valor_bruto": None, "nota": None})

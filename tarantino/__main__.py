@@ -3,6 +3,7 @@
     python -m tarantino abrir "<pasta da empresa>" [--fim 2026-10] [--meses 24] [--cnpj ...]
     python -m tarantino qualitativo "<pasta>" [--modo claude-code|manual] [--importar]
     python -m tarantino calibrar "<pasta de trabalho>" [--so R1 R2]
+    python -m tarantino mercado [--forcar]
     python -m tarantino status "<pasta da empresa>"
 """
 
@@ -54,6 +55,8 @@ def cmd_avaliar(args: argparse.Namespace) -> None:
     print("  " + " · ".join(f"{c.nome} {_brl(c.valor_patrimonio)}" for c in r.cenarios))
     print(f"  preço recomendado (margem de segurança): {_brl(r.preco_recomendado)}")
     print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/valuation.md · notas do Score: score_notas.json")
+    if r.aviso_mercado:
+        print(f"\n⚠ {r.aviso_mercado}")
 
 
 def cmd_qualitativo(args: argparse.Namespace) -> None:
@@ -97,6 +100,24 @@ def cmd_calibrar(args: argparse.Namespace) -> None:
               f"erro médio {r['erro_medio']} · viés {r['vies_medio']:+} (positivo = agente mais otimista)")
 
 
+def cmd_mercado(args: argparse.Namespace) -> None:
+    from market_data.painel import PASTA, atualizar_painel
+    from tarantino.mercado import selic_por_horizonte
+
+    p = atualizar_painel(forcar=args.forcar)
+    print(f"Painel de mercado ({PASTA}) · conferido em {p['coletado_em']} · "
+          f"atualizados agora: {', '.join(p['atualizados']) or 'nenhum (nada venceu)'}")
+    for nome, s in p["sgs"].items():
+        print(f"  {s.get('descricao', nome):70} {s['valor']:>8} {s.get('unidade', '')} ({s['data']})")
+    for nome, f in p["focus"].items():
+        anos = ' · '.join(f"{a}: {v:g}" for a, v in sorted(f['medianas'].items()))
+        print(f"  Focus {nome:8} ({f['data']}) {anos}")
+    valores, _ = selic_por_horizonte(p)
+    print("  Selic de referência: " + " · ".join(f"{h} anos {v:.2%}" for h, v in valores.items()))
+    for a in p["avisos"]:
+        print(f"  ! {a}")
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     e = ler_estado(args.pasta)
     print(f"Case {e.id} · {e.empresa} · estado: {e.estado} · atualizado em {e.atualizado_em}")
@@ -133,6 +154,9 @@ def main(argv: list[str] | None = None) -> None:
     c.add_argument("--mapa", help="JSON caso → pasta (padrão: cases/calibracao.json)")
     c.add_argument("--so", nargs="*", help="rodar só estes casos (ex.: R1 R2)")
     c.set_defaults(func=cmd_calibrar)
+    m = sub.add_parser("mercado", help="mostra o painel de mercado (BCB/Focus) e atualiza o que venceu")
+    m.add_argument("--forcar", action="store_true", help="busca tudo de novo, mesmo o que não venceu")
+    m.set_defaults(func=cmd_mercado)
     s = sub.add_parser("status", help="mostra o estado e o histórico do case")
     s.add_argument("pasta")
     s.set_defaults(func=cmd_status)

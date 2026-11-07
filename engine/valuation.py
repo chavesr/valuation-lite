@@ -77,6 +77,7 @@ class ResultadoValuation(BaseModel):
     divida_fonte: str
     contingencias: list[Contingencia] = Field(default_factory=list)
     retencao_sugerida: float = 0.0  # contingências possíveis: ficam retidas no fechamento, não descontam o preço
+    aviso_mercado: str | None = None  # Selic mudou desde a fotografia do case (o analista decide se atualiza)
     piso_patrimonial: float | None = None
     epv: float | None = None
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
