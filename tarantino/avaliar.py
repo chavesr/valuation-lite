@@ -74,6 +74,11 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
                    f"da negociação é o preço recomendado (R$ {brl(r.preco_recomendado, 0)}).", "",
                    "| Ponte | R$ |", "|---|---:|"]
         linhas += [f"| {nome} | {brl(v, 0)} |" for nome, v in r.ponte_dono]
+    if r.faixa_venda:
+        linhas += ["", "## Faixa de venda", "",
+                   f"- Venda forçada (cenário conservador): R$ {brl(r.faixa_venda['forcada'], 0)}",
+                   f"- **Venda a mercado (preço recomendado): R$ {brl(r.faixa_venda['mercado'], 0)}**",
+                   f"- Potencial máximo (cenário otimista): R$ {brl(r.faixa_venda['maximo'], 0)}"]
     if r.regua_payback:
         nomes = {"forcada": "Venda forçada", "mercado": "Mercado", "maximo": "Máximo (régua da casa)"}
         linhas += ["", "## Conferência: régua da casa (payback)", "",

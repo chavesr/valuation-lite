@@ -4,6 +4,7 @@
     python -m tarantino qualitativo "<pasta>" [--modo claude-code|manual] [--importar]
     python -m tarantino calibrar "<pasta de trabalho>" [--so R1 R2]
     python -m tarantino revisar "<pasta>" [--modo claude-code|manual] [--importar] [--forcar]
+    python -m tarantino relatorio "<pasta>" [--modo claude-code|manual] [--refazer-textos] [--so-html]
     python -m tarantino finalidade "<pasta>" [--tipo entrada_socio] [--percentual 0.3] [--aporte ...] [--pedido ...]
     python -m tarantino mercado [--forcar]
     python -m tarantino status "<pasta da empresa>"
@@ -152,6 +153,28 @@ def cmd_revisar(args: argparse.Namespace) -> None:
     print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/revisao.md")
 
 
+def cmd_relatorio(args: argparse.Namespace) -> None:
+    from julgamento.executor import ErroJulgamento
+    from tarantino.relatorio import RelatorioBloqueado, gerar_relatorio
+
+    try:
+        r = gerar_relatorio(args.pasta, modo=args.modo, modelo=args.modelo, forcar_textos=args.refazer_textos,
+                            pdf=not args.so_html)
+    except RelatorioBloqueado as erro:
+        sys.exit(f"Relatório bloqueado: {erro}")
+    except (ErroJulgamento, RuntimeError) as erro:
+        sys.exit(f"F8: {erro}")
+    if "entrada" in r:
+        print(f"Pacote do redator gravado em: {r['entrada']}")
+        print(f"Peça ao Claude Code: 'leia esse arquivo e grave a resposta em {PASTA_SAIDA}/f8_saida.json'. "
+              f"Depois rode de novo: python -m tarantino relatorio \"{args.pasta}\" --modo manual")
+        return
+    print(f"Relatório: {r.get('pdf') or r['html']}")
+    if r["numeros_nao_conferidos"]:
+        print(f"⚠ Valores citados pelo redator que não estão no material: {', '.join(r['numeros_nao_conferidos'])} "
+              "— conferir o texto (textos.json) antes de enviar.")
+
+
 def cmd_finalidade(args: argparse.Namespace) -> None:
     from pathlib import Path
 
@@ -212,6 +235,13 @@ def main(argv: list[str] | None = None) -> None:
     rv.add_argument("--importar", action="store_true", help="só valida e importa _valuation/f7_saida.json")
     rv.add_argument("--forcar", action="store_true", help="roda o agente mesmo se nada mudou")
     rv.set_defaults(func=cmd_revisar)
+    rl = sub.add_parser("relatorio", help="F8: relatório em PDF (exige revisão sem alerta grave pendente)")
+    rl.add_argument("pasta")
+    rl.add_argument("--modo", choices=["claude-code", "manual", "api"], default="claude-code")
+    rl.add_argument("--modelo", help="modelo do Claude Code (padrão: o da conta)")
+    rl.add_argument("--refazer-textos", action="store_true", help="chama o redator mesmo se nada mudou")
+    rl.add_argument("--so-html", action="store_true", help="gera só o relatorio.html (sem PDF)")
+    rl.set_defaults(func=cmd_relatorio)
     f = sub.add_parser("finalidade", help="D7: venda total/parcial ou entrada de sócio, % das cotas, aporte, pedido")
     f.add_argument("pasta")
     f.add_argument("--tipo", choices=["venda_total", "venda_parcial", "entrada_socio"])

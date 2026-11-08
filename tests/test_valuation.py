@@ -161,3 +161,11 @@ def test_fluxo_negativo_conservador_e_o_pior_cenario():
     cons, base_c, otim = r.cenarios
     assert r.fluxo_base < 0
     assert cons.valor_patrimonio <= base_c.valor_patrimonio <= otim.valor_patrimonio
+
+
+def test_faixa_de_venda_sempre_progressiva():
+    r = _avaliar_com({})
+    f = r.faixa_venda
+    assert f["forcada"] <= f["mercado"] <= f["maximo"]
+    assert f["mercado"] == r.preco_recomendado
+    assert f["maximo"] == pytest.approx(max(r.cenarios[2].valor_patrimonio, r.preco_recomendado))

@@ -6,7 +6,7 @@ valuation vem daqui — só notas propostas (1–5) para as dimensões de julgam
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -50,6 +50,65 @@ class FuncaoDono(BaseModel):
     evidencia: str
 
 
+# dados estruturados e curtos para os visuais do relatório (desenhados pelo código: zero tokens no desenho)
+Curto = Annotated[str, Field(max_length=110)]
+
+
+class Perfil(BaseModel):
+    cidade_uf: str | None = None
+    fundacao: int | None = Field(None, ge=1900, le=2100)
+    funcionarios: str | None = Field(None, max_length=30, description="número ou faixa declarada (ex.: '7 a 9')")
+    setor: str | None = Field(None, max_length=80, description="setor em poucas palavras (ex.: etiquetas adesivas)")
+
+
+class EventoHistorico(BaseModel):
+    ano: int = Field(ge=1900, le=2100)
+    evento: str = Field(max_length=80)
+
+
+class ModeloNegocio(BaseModel):
+    operacao: list[Curto] = Field(default_factory=list, max_length=4, description="o que faz e como produz/entrega")
+    venda: list[Curto] = Field(default_factory=list, max_length=4, description="para quem vende e por quais canais")
+    receita: list[Curto] = Field(default_factory=list, max_length=4, description="como ganha dinheiro, preço, recorrência")
+
+
+class NoOrganograma(BaseModel):
+    id: str = Field(pattern=r"^[a-z0-9_]{1,30}$")
+    cargo: str = Field(max_length=40)
+    nome: str | None = Field(None, max_length=40, description="nome ou quantidade (ex.: 'equipe de 6')")
+    superior: str | None = Field(None, description="id do superior; vazio no topo")
+
+
+class Decisao(BaseModel):
+    decisao: str = Field(max_length=50)
+    quem: str = Field(max_length=40)
+    como: str = Field(max_length=110)
+
+
+class ItemMix(BaseModel):
+    item: str = Field(max_length=40)
+    percentual: float = Field(ge=0, le=100)
+
+
+class EtapaCadeia(BaseModel):
+    etapa: str = Field(max_length=32, description="ex.: fornecedores de papel, gráficas, indústria cliente")
+    quem: str = Field("", max_length=60, description="exemplos de quem atua nessa etapa")
+    empresa_atua: bool = False
+
+
+class Concorrente(BaseModel):
+    nome: str = Field(max_length=40, description="nome ou tipo (ex.: gráficas pequenas da região)")
+    perfil: str = Field("", max_length=60)
+    preco: int = Field(ge=1, le=5, description="1 = preço baixo … 5 = preço alto")
+    especializacao: int = Field(ge=1, le=5, description="1 = produto padrão … 5 = muito especializado")
+    comparacao: str = Field("", max_length=110, description="como a empresa se compara")
+
+
+class PosicaoEmpresa(BaseModel):
+    preco: int = Field(ge=1, le=5)
+    especializacao: int = Field(ge=1, le=5)
+
+
 class Qualitativo(BaseModel):
     """qualitativo.json — saída da F5 (analista fundamentalista)."""
 
@@ -66,6 +125,16 @@ class Qualitativo(BaseModel):
     lacunas_informacao: list[str] = Field(default_factory=list)
     funcoes_do_dono: list[FuncaoDono] = Field(default_factory=list,
                                               description="funções sem substituto além da gestão geral (D1)")
+    perfil: Perfil = Field(default_factory=Perfil)
+    linha_do_tempo: list[EventoHistorico] = Field(default_factory=list, max_length=8)
+    modelo: ModeloNegocio = Field(default_factory=ModeloNegocio)
+    organograma: list[NoOrganograma] = Field(default_factory=list, max_length=14)
+    quem_decide: list[Decisao] = Field(default_factory=list, max_length=6)
+    mix_receita: list[ItemMix] = Field(default_factory=list, max_length=6,
+                                       description="% da receita por produto, serviço ou canal (se o pacote informar)")
+    cadeia_valor: list[EtapaCadeia] = Field(default_factory=list, max_length=6)
+    concorrentes: list[Concorrente] = Field(default_factory=list, max_length=6)
+    posicao_empresa: PosicaoEmpresa | None = None
 
     @field_validator("funcoes_do_dono")
     @classmethod
@@ -117,3 +186,27 @@ class Revisao(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("alertas com id repetido")
         return v
+
+
+# --------------------------------------------------------------------------- F8 (redator)
+
+
+class TextosRelatorio(BaseModel):
+    """textos.json — saída da F8 (redator). Só texto: números e gráficos vêm do sistema."""
+
+    case_id: str
+    tese: str = Field(min_length=40, max_length=450, description="2 a 3 frases: o que é a empresa e quanto vale, por quê")
+    por_que_olhar: list[Annotated[str, Field(max_length=170)]] = Field(
+        min_length=2, max_length=4, description="forças: até 4 itens de no máximo 2 linhas, com o número que prova")
+    o_que_pesa_contra: list[Annotated[str, Field(max_length=170)]] = Field(
+        min_length=2, max_length=4, description="fragilidades: até 4 itens de no máximo 2 linhas, com a ação que resolve")
+    sobre_empresa: str = Field(min_length=80, max_length=700,
+                               description="o negócio em 3 a 4 frases (linha do tempo, modelo e organograma são gráficos)")
+    gestao_pessoas: str = Field(min_length=40, max_length=500, description="papel do dono, equipe, sucessão: 2 a 3 frases")
+    mercado_setor: str = Field(min_length=80, max_length=700,
+                               description="setor, concorrência e fosso em 3 a 4 frases (cadeia e mapa são gráficos)")
+    leitura_financeira: str = Field(min_length=80, max_length=1400, description="o que os números mostram e o que foi ajustado")
+    leitura_riscos: str = Field(min_length=60, max_length=1200, description="principais riscos e contingências")
+    leitura_valuation: str = Field(min_length=60, max_length=1200, description="como chegamos ao valor, em linguagem simples")
+    estrutura_transacao: str = Field(min_length=60, max_length=1200, description="como a operação pode ser feita")
+    proximos_passos: list[str] = Field(min_length=2, max_length=7, description="o que o dono e a ND fazem a seguir")

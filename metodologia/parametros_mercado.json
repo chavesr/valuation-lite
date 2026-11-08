@@ -75,5 +75,9 @@
     "_leia": "Quando cada dado 'vence' e é buscado de novo no Banco Central. diaria = todo dia; semanal:segunda = Focus, publicado às segundas; mensal:N = a partir do dia N de cada mês (IPCA ~dia 12 pelo IBGE; nota de crédito do BCB ~fim do mês). A Selic meta é conferida todo dia (pega a decisão do Copom no dia seguinte).",
     "aviso_variacao_selic_referencia": 0.0025,
     "_aviso": "case em andamento é avisado se a Selic de referência mudar 0,25 p.p. ou mais, ou se a Selic meta mudar"
+  },
+  "ipca_mais": {
+    "juro_real": 0.06,
+    "origem": "validado 07/11/2026: juro real de 6% a.a. para o título Tesouro IPCA+ na comparação com o investimento na empresa; IPCA de cada ano vem da Focus"
   }
 }

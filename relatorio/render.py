@@ -1,0 +1,370 @@
+"""HTML do relatório (até ~10 páginas A4) e PDF pelo Edge/Chrome em modo headless (já instalados no Windows).
+
+Capítulos (definidos pela ND em 07/11/2026): 1 Visão geral · 2 Sobre a empresa · 3 Análise de mercado e setor ·
+4 Análise financeira e riscos do negócio · 5 Valuation · 6 Estrutura da transação.
+Visual: o do relatório de investimento da ND (A4, branco, Helvetica), em versão reduzida e mais visual, sóbrio
+(07/11/2026): preto e tons de cinza claro, blocos arredondados; laranja #FF9900 só nos destaques dos gráficos. Gráficos, ícones, tabelas e fluxogramas são desenhados pelo código (zero tokens); o redator
+só escreve frases curtas. Cada capítulo é uma função própria, ajustada um a um com a ND.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import tempfile
+from html import escape
+from pathlib import Path
+
+from relatorio import graficos as g
+from relatorio.evolucao import evolucao
+from relatorio.icones import icone
+
+CSS = """
+@page { size: A4; margin: 15mm 14mm 16mm 14mm;
+        @bottom-left { content: "NOVA DIREÇÃO  ·  Relatório de valuation  ·  confidencial"; font: 7pt Helvetica, Arial,
+                       sans-serif; color: #8C8C8C; letter-spacing: .04em; }
+        @bottom-right { content: "Pág. " counter(page); font: 7pt Helvetica, Arial, sans-serif; color: #8C8C8C; } }
+:root { --laranja:#FF9900; --laranja-claro:#FFF4E3; --cinza-quadro:#F2F2F2; --ink:#000000; --ink2:#1A1A1A;
+        --gray:#6B6B6B; --gray2:#8C8C8C; --line:#E6E6E6; }
+* { box-sizing: border-box; }
+html, body { background: #FFFFFF; }
+body { margin: 0; color: var(--ink2); font-family: Helvetica, Arial, sans-serif; font-size: 8.6pt; line-height: 1.42;
+       -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+h1, h2, h3 { margin: 0; color: var(--ink); }
+p { margin: 0 0 1.8mm; }
+p, ul.marcador li, ul li { text-align: justify; hyphens: auto; -webkit-hyphens: auto; }
+.capitulo { break-before: page; }
+.cab { border-bottom: 1px solid var(--line); padding-bottom: 2.2mm; margin-bottom: 4mm; }
+.cab h2 { font-size: 15pt; font-weight: 700; }
+.cab .sub { color: var(--gray); font-size: 7.8pt; margin-top: .8mm; }
+.quadro { border: 1px solid var(--line); border-radius: 3mm; padding: 3mm 3.4mm 2.6mm; margin-bottom: 3mm; break-inside: avoid; }
+.quadro.destaque { background: var(--cinza-quadro); border-color: var(--cinza-quadro); }
+.quadro h3 { display: flex; align-items: center; gap: 1.6mm; font-size: 9pt; font-weight: 700; color: var(--ink);
+             margin-bottom: 1.6mm; }
+.duas { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+.duas .quadro { margin-bottom: 0; }
+.linha-quadros { margin-bottom: 3mm; }
+.kpis { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2mm; margin-bottom: 3.4mm; }
+.kpi { background: var(--cinza-quadro); border-radius: 3mm; padding: 2.4mm 2.8mm; }
+.kpi .rot { display: flex; align-items: center; gap: 1.2mm; font-size: 7pt; color: var(--gray); line-height: 1.2; min-height: 6mm; }
+.kpi .val { font-size: 12.5pt; font-weight: 700; color: var(--ink); margin-top: 1mm; white-space: nowrap; }
+.kpi .obs { font-size: 6.8pt; color: var(--gray2); line-height: 1.25; margin-top: .6mm; }
+ul.marcador { list-style: none; padding: 0; margin: 0 0 2mm; }
+ul.marcador li { position: relative; padding-left: 3.2mm; margin-bottom: 1.1mm; }
+ul.marcador li::before { content: ""; position: absolute; left: 0; top: 1.5mm; width: 1.5mm; height: 1.5mm;
+                         background: var(--ink2); border-radius: 50%; }
+.legenda-graf { font-size: 7.2pt; color: var(--gray); margin: 1mm 0 .5mm; }
+.nota { font-size: 6.8pt; color: var(--gray2); }
+.kpi .val.pequeno { font-size: 10pt; white-space: normal; line-height: 1.2; }
+.tres { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.4mm; margin-bottom: 1.5mm; }
+.coluna-modelo { background: var(--cinza-quadro); border-radius: 3mm; padding: 2.2mm 2.6mm; }
+.coluna-modelo .tit { display: flex; align-items: center; gap: 1.2mm; font-weight: 700; color: var(--ink);
+                      margin-bottom: 1.4mm; }
+.coluna-modelo ul.marcador { margin: 0; }
+.coluna-modelo ul.marcador li { text-align: left; hyphens: manual; }
+.grafico-org { margin: 1mm 0 2mm; }
+.secao { margin: 0 0 2.6mm; break-inside: avoid; }
+.kpis3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.6mm; margin-bottom: 2mm; }
+.kpi.mini { padding: 1.6mm 2mm; } .kpi.mini .val { font-size: 10.5pt; } .kpi.mini .rot { min-height: 0; }
+p.fosso { margin-top: 1.5mm; }
+.secao h3 { display: flex; align-items: center; gap: 1.6mm; font-size: 9pt; font-weight: 700; color: var(--ink);
+            margin-bottom: 2mm; padding-bottom: 1.2mm; border-bottom: 1px solid var(--line); }
+h3.sec { font-size: 9pt; color: var(--ink); margin: 4mm 0 1.6mm; }
+table { width: 100%; border-collapse: collapse; font-size: 7.8pt; margin: 1mm 0 3mm; }
+th { text-align: left; background: var(--ink2); color: #FFFFFF; font-weight: 700; padding: 1.3mm 1.8mm; }
+td { border-bottom: 1px solid var(--line); padding: 1.2mm 1.8mm; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+tr.total td { font-weight: 700; background: var(--cinza-quadro); }
+.ficha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm 5mm; background: var(--cinza-quadro);
+         padding: 2.5mm 3mm; margin-bottom: 3mm; border-radius: 3mm; }
+.ficha b { display: block; font-size: 6.8pt; color: var(--gray); font-weight: 400; }
+.aviso { background: var(--cinza-quadro); padding: 2mm 3mm; margin: 2mm 0; border-radius: 3mm; }
+.disclaimer { font-size: 6.8pt; color: var(--gray2); margin-top: 6mm; border-top: 1px solid var(--line); padding-top: 2mm; }
+table.riscos td:nth-child(1) { width: 62%; } table.riscos td:nth-child(2) { width: 9%; }
+table.riscos td:nth-child(3) { width: 29%; }
+"""
+
+
+def brl(v: float | None) -> str:
+    if v is None:
+        return "—"
+    s = f"{abs(v):,.0f}".replace(",", ".")
+    return f"−R$ {s}" if v < 0 else f"R$ {s}"
+
+
+def pct(v: float | None, casas: int = 1) -> str:
+    return "—" if v is None else f"{v * 100:.{casas}f}%".replace(".", ",")
+
+
+def _p(texto: str) -> str:
+    return "".join(f"<p>{escape(par.strip())}</p>" for par in texto.split("\n") if par.strip())
+
+
+def _ul(itens: list[str], classe: str = "marcador") -> str:
+    return f"<ul class='{classe}'>" + "".join(f"<li>{escape(i)}</li>" for i in itens) + "</ul>"
+
+
+def _cab(n: int, titulo: str, c: dict) -> str:
+    return (f'<div class="cab"><h2>{n:02d}. {escape(titulo)} | {escape(c["empresa_curto"])}</h2>'
+            f'<div class="sub">Setor: {escape(c.get("setor") or "—")} | {escape(c["data"])} | '
+            f'{escape(c["finalidade"])}</div></div>')
+
+
+def _secao(titulo: str, ic: str, corpo: str) -> str:
+    """Tópico sem moldura: só o título com ícone e o conteúdo (gráficos, colunas, tabelas)."""
+    return f'<div class="secao"><h3>{icone(ic, cor="#1A1A1A")}{escape(titulo)}</h3>{corpo}</div>'
+
+
+def _quadro(titulo: str, ic: str, corpo: str, classe: str = "") -> str:
+    return f'<div class="quadro {classe}"><h3>{icone(ic, cor="#1A1A1A")}{escape(titulo)}</h3>{corpo}</div>'
+
+
+def cap1_visao_geral(c: dict) -> str:
+    t, v = c["textos"], c["valuation"]
+    cen = {x["nome"]: x for x in v["cenarios"]}
+    faixa = (cen["conservador"]["valor_patrimonio"], cen["otimista"]["valor_patrimonio"])
+    divida_liq = (v.get("divida_bruta") or 0) - (v.get("caixa") or 0)
+    margem = v["ebitda_base"] / v["receita_base"] if v.get("receita_base") else None
+    kpis = [("receita", f"Receita {v['periodo_base']}", g.brl_compacto(v["receita_base"]),
+             f"crescimento {pct(v['crescimento_historico'])} a.a." if v.get("crescimento_historico") is not None else ""),
+            ("ebitda", "EBITDA econômico", g.brl_compacto(v["ebitda_base"]), f"margem de {pct(margem)}"),
+            ("faixa", "Faixa de valor", g.faixa_compacta(*faixa), "do conservador ao otimista"),
+            ("relogio", "Payback do preço", f"{str(v['payback_preco']).replace('.', ',')} anos" if v.get("payback_preco")
+             else "—", "régua da casa: até 3 anos"),
+            ("divida", "Dívida líquida", g.brl_compacto(divida_liq),
+             f"{divida_liq / v['ebitda_base']:.1f}× o EBITDA".replace(".", ",") if v["ebitda_base"] > 0 else "")]
+    kpi_html = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
+                       f'<div class="val">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
+                       for ic, rot, val, obs in kpis)
+    fv = v.get("faixa_venda") or {"forcada": faixa[0], "mercado": v["preco_recomendado"], "maximo": faixa[1]}
+    valores = [("Venda forçada", fv["forcada"], "cenário conservador · 0 a 6 meses", False),
+               ("Venda a mercado", fv["mercado"], "preço recomendado · 6 a 18 meses", True),
+               ("Potencial máximo", fv["maximo"], "cenário otimista · estratégico", False)]
+    if c.get("pedido_vendedor"):
+        valores.append(("Expectativa do dono", c["pedido_vendedor"], "pedido informado", False))
+    # quanto vira o investimento: mesmo desembolso (preço + dívida + prováveis) na empresa, na Selic e no IPCA+
+    descontos = divida_liq + sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
+    desembolso = v["preco_recomendado"] + descontos
+    base_c = next((x for x in v["cenarios"] if x["nome"] == "base"), None)
+    ev = None
+    if base_c and base_c["fluxos"] and desembolso > 0 and v["fluxo_base"] > 0:
+        ev = evolucao(desembolso, base_c["fluxos"], base_c["valor_terminal"], v["risco"]["taxa_desconto"], c["ano"],
+                      c.get("focus_selic") or {}, c.get("focus_ipca") or {}, c.get("juro_real", 0.06))
+    if ev:
+        series = [("empresa", ev["empresa"], g.LARANJA), ("Selic", ev["selic"], g.TINTA),
+                  ("IPCA+", ev["ipca_mais"], "#9A9A9A")]
+        selic_media = (ev["selic"][-1] / ev["selic"][0]) ** (1 / (len(ev["anos"]) - 1)) - 1
+        nota_ev = (f'Desembolso do comprador: {g.brl_compacto(desembolso)} (preço recomendado + dívida assumida). '
+                   f'Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF. '
+                   + (f'<b>TIR do negócio: {pct(ev["tir"])} a.a.</b> contra Selic de {pct(selic_media)} a.a. — a diferença '
+                      'é o prêmio pelo risco: a renda fixa é garantida, o caixa da empresa não. ' if ev["tir"] is not None else '')
+                   + f'IPCA+ com juro real de {pct(c.get("juro_real", 0.06))} a.a.; Selic e IPCA esperados pela Focus/BCB.')
+        bloco_ev = g.linhas_evolucao(ev["anos"], series) + f'<div class="nota">{nota_ev}</div>'
+    else:
+        bloco_ev = '<div class="nota">Sem caixa positivo projetado: comparação com a renda fixa não se aplica.</div>'
+    notas_radar = [(nome.split(" e ")[0].replace("Confiabilidade da informação", "Informação")
+                    .replace("Setor", "Setor/fosso"), nota) for nome, nota, _ in c["notas"]]
+    return "".join([
+        _cab(1, "Visão geral", c),
+        _quadro("A empresa", "empresa", f"<p>{escape(t['tese'])}</p>", "destaque"),
+        f'<div class="kpis">{kpi_html}</div>',
+        '<div class="duas">',
+        _secao("Por que olhar", "positivo", _ul(t["por_que_olhar"])
+               + '<div class="legenda-graf">Receita e EBITDA econômico (R$)</div>' + g.colunas_mini(c["grafico_dre"])),
+        _secao("O que pesa contra", "alerta", _ul(t["o_que_pesa_contra"])
+               + '<div class="legenda-graf">Risco por área (5 = mais sólido)</div>' + g.radar(notas_radar)),
+        '</div><div class="duas">',
+        _secao("Quanto vale", "valor", g.barras_valor(valores)
+               + '<div class="nota">Valores para 100% das cotas, já descontadas dívidas e contingências prováveis.</div>'),
+        _secao("Quanto vira o investimento", "retorno", bloco_ev),
+        '</div>'])
+
+
+def cap2_empresa(c: dict) -> str:
+    t, q = c["textos"], c.get("qual") or {}
+    perfil = q.get("perfil") or {}
+    fund = perfil.get("fundacao") or min((e["ano"] for e in q.get("linha_do_tempo") or []), default=None)
+    anos = c["ano"] - fund if fund else None
+    cartoes = [("local", "Sede", perfil.get("cidade_uf") or "—", ""),
+               ("calendario", "Fundação", str(fund) if fund else "—", f"{anos} anos de mercado" if anos else ""),
+               ("pessoas", "Funcionários", str(perfil.get("funcionarios") or "—"), "declarado" if perfil.get("funcionarios") else ""),
+               ("documento", "CNPJs no grupo", str(c.get("cnpjs") or "—"), c.get("regime") or ""),
+               ("empresa", "Setor", c.get("setor") or "—", (perfil.get("setor") or "")[:60])]
+    cards = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
+                    f'<div class="val pequeno">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
+                    for ic, rot, val, obs in cartoes)
+    h = ['<section class="capitulo">' + _cab(2, "Sobre a empresa", c),
+         f'<div class="kpis">{cards}</div>',
+         _quadro("O negócio", "empresa", _p(t["sobre_empresa"]), "destaque")]
+    eventos = [(e["ano"], e["evento"]) for e in q.get("linha_do_tempo") or []]
+    if eventos:
+        h.append(_secao("Linha do tempo", "calendario", g.linha_do_tempo(eventos)))
+    m = q.get("modelo") or {}
+    if any(m.get(k) for k in ("operacao", "venda", "receita")):
+        colunas = "".join(f'<div class="coluna-modelo"><div class="tit">{icone(ic, cor="#1A1A1A", tam=12)}'
+                          f'{escape(tit)}</div>{_ul(m.get(k) or ["—"])}</div>'
+                          for k, tit, ic in (("operacao", "Operação", "empresa"), ("venda", "Como vende", "pessoas"),
+                                             ("receita", "Como ganha dinheiro", "divida")))
+        mix = q.get("mix_receita") or []
+        extra = ('<div class="legenda-graf">Participação na receita (declarada)</div>'
+                 + g.barras_percentual([(x["item"], x["percentual"]) for x in mix])) if mix else ""
+        h.append(_secao("Modelo de negócio", "receita", f'<div class="tres">{colunas}</div>{extra}'))
+    org = q.get("organograma") or []
+    decide = q.get("quem_decide") or []
+    corpo = ""
+    if org:
+        corpo += f'<div class="grafico-org">{g.organograma(org)}</div>'
+    if decide:
+        corpo += ('<table><tr><th>Decisão</th><th>Quem decide</th><th>Como</th></tr>'
+                  + "".join(f"<tr><td>{escape(d['decisao'])}</td><td>{escape(d['quem'])}</td><td>{escape(d['como'])}</td></tr>"
+                            for d in decide) + '</table>')
+    h += [_quadro("Gestão e pessoas", "pessoas", _p(t["gestao_pessoas"]), "destaque"),
+          _secao("Organograma e quem decide", "pessoas", corpo) if corpo else "",
+          '<div class="nota">Perfil, histórico, operação e organograma com base no que o empreendedor declarou e nos '
+          'documentos recebidos.</div>', '</section>']
+    return "".join(h)
+
+
+def _num(v: float | None, casas: int = 2, suf: str = "%") -> str:
+    return "—" if v is None else f"{v:.{casas}f}{suf}".replace(".", ",")
+
+
+def cap3_mercado(c: dict) -> str:
+    t, q, v = c["textos"], c.get("qual") or {}, c["valuation"]
+    fosso = q.get("fosso") or {}
+    texto = _p(t["mercado_setor"])
+    if fosso:
+        fontes = ", ".join(fosso.get("fontes") or []) or "—"
+        texto += (f'<p class="fosso"><b>Fosso competitivo: {escape(fosso.get("forca", "—"))}</b> · fontes: '
+                  f'{escape(fontes)}</p>')
+    h = ['<section class="capitulo">' + _cab(3, "Análise de mercado e setor", c),
+         _quadro("O setor", "empresa", texto, "destaque")]
+    if q.get("cadeia_valor"):
+        h.append(_secao("Cadeia de valor", "faixa", g.cadeia_valor(q["cadeia_valor"])
+                        + '<div class="nota">Em preto, as etapas em que a empresa atua.</div>'))
+    pos = q.get("posicao_empresa")
+    mapa = (g.mapa_posicionamento(q.get("concorrentes") or [],
+                                  (c["empresa_curto"], pos["preco"], pos["especializacao"]) if pos else None)
+            if (q.get("concorrentes") or pos) else '<div class="nota">Sem concorrentes informados.</div>')
+    sgs, focus, prox = c.get("sgs") or {}, c.get("focus") or {}, str(c["ano"] + 1)
+    med = lambda k: ((focus.get(k) or {}).get("medianas") or {}).get(prox)  # noqa: E731
+    cards = [("Selic hoje", _num((sgs.get("selic_meta") or {}).get("valor")), "meta do Copom"),
+             ("Selic esperada", _num(v["risco"]["selic"] * 100), f"média no horizonte"),
+             ("IPCA 12 meses", _num((sgs.get("ipca_12m") or {}).get("valor")), "inflação acumulada"),
+             (f"PIB {prox}", _num(med("pib"), 1), "crescimento esperado"),
+             (f"Dólar {prox}", _num(med("cambio"), 2, "").join(["R$ ", ""]) if med("cambio") else "—", "esperado"),
+             ("Capital de giro", _num((sgs.get("credito_pj_capital_giro") or {}).get("valor"), 1), "juros a.a. para empresas")]
+    cards_html = "".join(f'<div class="kpi mini"><div class="rot">{escape(r)}</div><div class="val">{escape(x)}</div>'
+                         f'<div class="obs">{escape(o)}</div></div>' for r, x, o in cards)
+    anos = [c["ano"] + i for i in range(0, 5)]
+    serie = lambda k: [((focus.get(k) or {}).get("medianas") or {}).get(str(a)) for a in anos]  # noqa: E731
+    traj = g.linhas_rentabilidade(anos, [("Selic", serie("selic"), g.LARANJA), ("IPCA", serie("ipca"), "#9A9A9A")])
+    h += ['<div class="duas">',
+          _secao("Posicionamento competitivo", "faixa", mapa
+                 + '<div class="nota">Notas de 1 a 5 a partir do que o empreendedor e os documentos informam.</div>'),
+          _secao("Cenário econômico", "receita", f'<div class="kpis3">{cards_html}</div>'
+                 '<div class="legenda-graf">Trajetória esperada (Focus/BCB, % a.a.)</div>' + traj),
+          '</div>']
+    conc = q.get("concorrentes") or []
+    if conc:
+        h.append(_secao("Concorrentes", "pessoas",
+                        '<table><tr><th>Concorrente</th><th>Perfil</th><th>Como a empresa se compara</th></tr>'
+                        + "".join(f"<tr><td>{escape(k['nome'])}</td><td>{escape(k.get('perfil', ''))}</td>"
+                                  f"<td>{escape(k.get('comparacao', ''))}</td></tr>" for k in conc) + '</table>'))
+    h.append('</section>')
+    return "".join(h)
+
+
+def cap4_financeiro(c: dict) -> str:
+    t, v, dre = c["textos"], c["valuation"], c["dre"]
+    cab = "".join(f"<th class='n'>{escape(p)}</th>" for p in dre["periodos"])
+    linhas = "".join(f"<tr class='{'total' if total else ''}'><td>{escape(conta)}</td>"
+                     + "".join(f"<td class='n'>{escape(x)}</td>" for x in vals) + "</tr>"
+                     for conta, vals, total in dre["linhas"])
+    riscos = "".join(f"<tr><td>{escape(r['descricao'])}</td><td>{escape(r['severidade'])}</td>"
+                     f"<td>{escape(r['tratamento'])}</td></tr>" for r in c["riscos"])
+    return "".join(['<section class="capitulo">', _cab(4, "Análise financeira e riscos do negócio", c),
+                    _p(t["leitura_financeira"]), f'<div>{g.receita_ebitda(c["grafico_dre"])}</div>',
+                    f'<table><tr><th>DRE econômica (R$)</th>{cab}</tr>{linhas}</table>',
+                    '<h3 class="sec">Riscos e contingências</h3>', _p(t["leitura_riscos"]),
+                    f'<table class="riscos"><tr><th>Risco</th><th>Peso</th><th>Tratamento no valor</th></tr>{riscos}</table>',
+                    '<h3 class="sec">Score de risco</h3>', f'<div>{g.notas_score(c["notas"])}</div>',
+                    f'<div class="nota">Escala da ND: 5 = melhor. Score {v["risco"]["score"]:.0f}/100 (0 = menor risco).</div>',
+                    '</section>'])
+
+
+def cap5_valuation(c: dict) -> str:
+    t, v = c["textos"], c["valuation"]
+    r = v["risco"]
+    cen = "".join(f"<tr><td>{x['nome'].capitalize()}</td><td class='n'>{pct(x['taxa'])}</td>"
+                  f"<td class='n'>{pct(x['crescimento'])}</td><td class='n'>{brl(x['valor_empresa'])}</td>"
+                  f"<td class='n'>{brl(x['valor_patrimonio'])}</td></tr>" for x in v["cenarios"])
+    regua = "".join(f"<tr><td>{escape(nome)}</td><td class='n'>{str(x['anos']).replace('.', ',')}</td>"
+                    f"<td class='n'>{brl(x['valor_patrimonio'])}</td></tr>"
+                    for nome, x in (("Venda forçada", v["regua_payback"].get("forcada")),
+                                    ("Mercado", v["regua_payback"].get("mercado")),
+                                    ("Máximo (régua da casa)", v["regua_payback"].get("maximo"))) if x)
+    h = ['<section class="capitulo">', _cab(5, "Valuation", c), _p(t["leitura_valuation"]),
+         f'<div class="aviso">Taxa de desconto <b>{pct(r["taxa_desconto"])}</b> ao ano = Selic de referência '
+         f'{pct(r["selic"], 2)} ({escape(c["selic_fonte"])}) + prêmio de risco {pct(r["premio_implicito"])} pelo Score. '
+         f'Horizonte de {r["horizonte_anos"]} anos, sem perpetuidade. Caixa sustentável: <b>{brl(v["fluxo_base"])}</b>/ano.</div>',
+         '<table><tr><th>Cenário</th><th class="n">Taxa</th><th class="n">Crescimento</th>'
+         f'<th class="n">Valor da empresa</th><th class="n">Valor para o sócio</th></tr>{cen}</table>']
+    if regua:
+        h += ['<h3 class="sec">Conferência pela régua da casa</h3>',
+              f'<table><tr><th>Régua (anos de caixa)</th><th class="n">Anos</th><th class="n">Valor para o sócio</th></tr>{regua}</table>']
+    h += ['<h3 class="sec">Ativos e patrimônio</h3><table>',
+          f"<tr><td>Ativos a mercado (sem descontar dívidas)</td><td class='n'>{brl(v.get('ativos_mercado'))}</td></tr>",
+          f"<tr><td>Patrimônio a mercado (ativos − passivos)</td><td class='n'>{brl(v.get('patrimonio_mercado'))}</td></tr>",
+          f"<tr><td>Patrimônio em venda forçada</td><td class='n'>{brl(v.get('piso_patrimonial'))}</td></tr>",
+          "</table>", '</section>']
+    return "".join(h)
+
+
+def cap6_transacao(c: dict) -> str:
+    t, v = c["textos"], c["valuation"]
+    h = ['<section class="capitulo">', _cab(6, "Estrutura da transação", c), _p(t["estrutura_transacao"])]
+    if c.get("leitura_finalidade"):
+        h.append(_ul([x.replace("**", "") for x in c["leitura_finalidade"][1:]]))
+    if v.get("ponte_dono"):
+        h += ['<h3 class="sec">O que sobra para o dono</h3>', f'<div>{g.cascata([tuple(x) for x in v["ponte_dono"]])}</div>']
+        if v.get("retencao_sugerida"):
+            h.append(f'<div class="aviso">Retenção sugerida no fechamento: <b>{brl(v["retencao_sugerida"])}</b>.</div>')
+    h += ['<h3 class="sec">Próximos passos</h3>', _ul(t["proximos_passos"]),
+          '<div class="disclaimer">Relatório preparado pela Nova Direção com base em documentos e informações fornecidos '
+          'pela empresa e por seus sócios, não auditados. Os valores são estimativas para orientar a negociação e não '
+          'constituem garantia de preço. Informações declaradas e não comprovadas dependem de diligência. '
+          'Documento confidencial.</div>', '</section>']
+    return "".join(h)
+
+
+CAPITULOS = {1: cap1_visao_geral, 2: cap2_empresa, 3: cap3_mercado, 4: cap4_financeiro, 5: cap5_valuation,
+             6: cap6_transacao}
+
+
+def montar_html(c: dict, capitulos: list[int] | None = None) -> str:
+    """`c` é o contexto montado por tarantino.relatorio; `capitulos` permite gerar só alguns (prévia)."""
+    corpo = "".join(CAPITULOS[n](c) for n in (capitulos or sorted(CAPITULOS)))
+    return ("<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><title>Valuation — "
+            f"{escape(c['empresa'])}</title><style>{CSS}</style></head><body>{corpo}</body></html>")
+
+
+def navegador() -> str | None:
+    for c in (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+              r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+              r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+        if Path(c).exists():
+            return c
+    return shutil.which("msedge") or shutil.which("chrome") or shutil.which("google-chrome")
+
+
+def html_para_pdf(html: Path, pdf: Path, timeout: int = 120) -> None:
+    exe = navegador()
+    if not exe:
+        raise RuntimeError("Edge/Chrome não encontrado: abra o relatorio.html e imprima como PDF.")
+    with tempfile.TemporaryDirectory(prefix="tarantino_pdf_") as perfil:
+        cmd = [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", f"--user-data-dir={perfil}",
+               "--virtual-time-budget=4000", f"--print-to-pdf={pdf}", html.resolve().as_uri()]
+        subprocess.run(cmd, capture_output=True, timeout=timeout)
+    if not pdf.exists() or pdf.stat().st_size < 1000:
+        raise RuntimeError("o navegador não gerou o PDF; abra o relatorio.html e imprima como PDF.")

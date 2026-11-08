@@ -79,6 +79,7 @@ class ResultadoValuation(BaseModel):
     retencao_sugerida: float = 0.0  # contingências possíveis: ficam retidas no fechamento, não descontam o preço
     aviso_mercado: str | None = None  # Selic mudou desde a fotografia do case (o analista decide se atualiza)
     regua_payback: dict[str, dict[str, float]] = Field(default_factory=dict)  # régua da casa (conferência)
+    faixa_venda: dict[str, float] = Field(default_factory=dict)  # forçada ≤ mercado ≤ máximo (cenários do DCF)
     payback_preco: float | None = None  # anos de fluxo para pagar o preço recomendado + dívida + prováveis
     piso_patrimonial: float | None = None  # ativos em liquidação ordenada − passivos (venda forçada)
     patrimonio_mercado: float | None = None  # ativos a valor de mercado − passivos (critério da ND)
@@ -322,6 +323,13 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     r.ponte_dono.append(("= Sobra para o dono", round(sum(v for _, v in r.ponte_dono), 2)))
     if r.retencao_sugerida:
         r.ponte_dono.append(("(retido no fechamento até a contingência possível prescrever)", -r.retencao_sugerida))
+
+    # faixa de venda (decisão de 07/11/2026): forçada = conservador, mercado = preço recomendado (base com margem),
+    # máximo = otimista — sempre progressivos (a margem não pode jogar o preço abaixo da forçada nem acima do máximo)
+    cons_v, otim_v = r.cenarios[0].valor_patrimonio, r.cenarios[2].valor_patrimonio
+    r.faixa_venda = {"forcada": round(max(min(cons_v, r.preco_recomendado), 0.0), 2),
+                     "mercado": r.preco_recomendado,
+                     "maximo": round(max(otim_v, r.preco_recomendado), 2)}
 
     # régua da casa (payback): valor da empresa = anos × fluxo; patrimônio = empresa − dívida líquida − prováveis
     rp = p["regua_payback"]
