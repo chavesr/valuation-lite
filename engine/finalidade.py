@@ -87,9 +87,9 @@ def leitura(f: Finalidade, preco: float, teto: float | None, fluxo: float) -> tu
             base = "implícito pelos 100%"
         linha = (f"Pedido do vendedor: R$ {brl(f.pedido_vendedor, 0)} → valor {base} de **R$ {brl(implicito, 0)}**")
         if preco > 0:
-            linha += f", {implicito / preco:.1f}× o preço recomendado"
+            linha += f", {implicito / preco:.1f}× o preço recomendado".replace(".", ",")
         if fluxo > 0:
-            linha += f" e {implicito / fluxo:.1f} anos de fluxo"
+            linha += f" e {implicito / fluxo:.1f} anos de fluxo".replace(".", ",")
         linhas.append(linha + ".")
         if teto and implicito > teto:
             alertas.append(f"Pedido do vendedor implica R$ {brl(implicito, 0)}, acima do valor de referência (teto) de "

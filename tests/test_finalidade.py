@@ -12,7 +12,7 @@ def test_modelo_padrao_e_venda_total(tmp_path):
 
 def test_venda_total_com_pedido_acima_do_teto():
     linhas, alertas = leitura(Finalidade(pedido_vendedor=2_000_000), preco=1_400_000, teto=1_900_000, fluxo=500_000)
-    assert any("1.4× o preço recomendado" in l and "4.0 anos de fluxo" in l for l in linhas)
+    assert any("1,4× o preço recomendado" in l and "4,0 anos de fluxo" in l for l in linhas)
     assert any("acima do valor de referência" in a for a in alertas)
 
 

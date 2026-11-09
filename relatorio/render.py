@@ -365,7 +365,7 @@ def _mes(comp: str) -> str:
 def _bloco_clientes(cl: dict | None) -> str:
     if not cl or not cl.get("ranking"):
         return _nd_nota("os 20 maiores clientes dos últimos 3 anos, com faturamento no ano e setor de atuação "
-                        "(aba 5_Clientes da planilha da ND) ou a curva ABC das notas fiscais.")
+                        "(planilha da ND) ou a curva ABC das notas fiscais.")
     tem_setor = any(r.get("setor") for r in cl["ranking"])
     linhas = "".join(f"<tr><td>{i}</td><td>{escape(r['cliente'])}</td>"
                      + (f"<td>{escape(r.get('setor') or ND)}</td>" if tem_setor else "")
@@ -449,7 +449,7 @@ def cap4_financeiro(c: dict) -> str:
                      + g.colunas_serie(itens, set(top), altura=110, largura=660, titulo="Faturamento mensal")
                      + f'<div class="nota">{_mes(m["meses"][0])} a {_mes(m["meses"][-1])} · fonte: {escape(m["fonte"] or ND)}.</div>')
     else:
-        bloco_mes = _nd_nota("o faturamento mês a mês dos últimos 24 meses (PGDAS-D ou aba 4_Faturamento).")
+        bloco_mes = _nd_nota("o faturamento mês a mês dos últimos 24 meses (declarações do Simples ou planilha da ND).")
     linhas_rec = f.get("linhas_receita")
     mix = q.get("mix_receita") or []
     if linhas_rec:

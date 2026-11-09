@@ -84,7 +84,28 @@ def fatos_compactos(pasta: Path) -> str:
     fv = v.get("faixa_venda") or {}
     if fv:
         linhas.append(f"- Venda forçada {_r(fv.get('forcada'))} · potencial máximo {_r(fv.get('maximo'))}")
-    linhas += [f"- Valor de referência (teto para ofertar na rede): {_r(v.get('valor_oferta'))} ({v.get('valor_oferta_origem')})",
+    base_c = next((x for x in v.get("cenarios", []) if x["nome"] == "base"), None)
+    if base_c:
+        linhas.append(f"- Valor para o sócio sem margem de segurança (cenário base): {_r(base_c['valor_patrimonio'])} "
+                      "(é o limite do earn-out, não o preço)")
+    try:  # ida a mercado (capítulo 6): mesmos números do relatório
+        dados = DadosCase.model_validate_json((saida / "dados_brutos.json").read_text(encoding="utf-8"))
+        dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
+        tr = calc_tr.montar(dados, v, fin, _param_valuation(), dres)
+        m = next((x for x in tr["cenarios"] if x["chave"] == "mercado"), None)
+        if m:
+            linhas.append(f"- Valor de ida a mercado (preço das cotas + dívidas assumidas, base da comissão ND): "
+                          f"{_r(m['bruto'])} · comissão ND {_r(m['comissao'])} · IR estimado do sócio {_r(m['ir'])} · "
+                          f"sobra para o dono {_r(m['sobra'])}")
+        sug = (tr.get("pagamento") or {}).get("estruturas", [None])[-1]
+        if sug:
+            linhas.append(f"- Pagamento sugerido: entrada de {sug['entrada_pct']:.0%} ({_r(sug['entrada'])})"
+                          + (f", {sug['n']} parcelas de {_r(sug['parcela'])} corrigidas pelo CDI" if sug["n"] else "")
+                          + (f", earn-out até {_r(sug['earnout'])}" if sug["earnout"] else "")
+                          + (f", escrow de {_r(sug['escrow'])}" if sug["escrow"] else ""))
+    except (OSError, ValueError, KeyError):
+        pass
+    linhas += [
                f"- Receita {v['periodo_base']}: {_r(v['receita_base'])} · EBITDA econômico {_r(v['ebitda_base'])} · "
                f"caixa sustentável {_r(v['fluxo_base'])}/ano",
                f"- Taxa de desconto {v['risco']['taxa_desconto'] * 100:.1f}% (Selic de referência "
@@ -94,9 +115,6 @@ def fatos_compactos(pasta: Path) -> str:
                f"- Finalidade: {fin.descricao}" + (f" · pedido do vendedor {_r(fin.pedido_vendedor)}" if fin.pedido_vendedor else "")]
     for c in v.get("contingencias", []):
         linhas.append(f"- Contingência {c['classificacao']}: {c['descricao']} ({_r(c['valor_bruto'])})")
-    for nome, val in v.get("ponte_dono") or []:
-        if nome.startswith("="):
-            linhas.append(f"- Sobra para o dono no teto: {_r(val)}")
     linhas += ["", "## Fatos da análise qualitativa (F5)", f"- Resumo: {q.get('resumo', '—')}",
                f"- Modelo de negócio: {q.get('modelo_negocio', '—')}",
                f"- Fosso: {(q.get('fosso') or {}).get('forca', '—')} — {(q.get('fosso') or {}).get('justificativa', '')}",
