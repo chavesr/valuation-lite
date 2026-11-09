@@ -126,7 +126,7 @@ def test_d5_patrimonio_a_mercado_e_em_liquidacao():
     dres = normalizar(dados)
     notas = propor_notas(dados, None, dres, dres[0])
     risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094)
-    liq = avaliar(dados, dres, None, risco, notas)
+    liq = avaliar(dados, dres, None, risco, notas, None, None, "liquidacao")
     merc = avaliar(dados, dres, None, risco, notas, None, None, "mercado")
     # mercado: 100 + 0,95×200 + 0,9×300 + 1,0×100 − 150 − 400 = +110 mil; liquidação = −100 mil
     assert liq.patrimonio_mercado == pytest.approx(110_000) and liq.piso_patrimonial == pytest.approx(-100_000)
@@ -169,3 +169,19 @@ def test_faixa_de_venda_sempre_progressiva():
     assert f["forcada"] <= f["mercado"] <= f["maximo"]
     assert f["mercado"] == r.preco_recomendado
     assert f["maximo"] == pytest.approx(max(r.cenarios[2].valor_patrimonio, r.preco_recomendado))
+
+
+def test_padrao_considera_o_maior_entre_fluxo_e_patrimonio_a_mercado():
+    """Decisão de 09/11/2026: sem escolha do analista, o preço nunca fica abaixo do patrimônio a mercado."""
+    import datetime
+    dados = _dados()
+    dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
+                                   caixa_aplicacoes=100_000, contas_receber=200_000, estoques=3_000_000,
+                                   imobilizado_liquido=100_000, fornecedores=150_000, emprestimos_lp=400_000,
+                                   proveniencia=PROV)]
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094)
+    r = avaliar(dados, dres, None, risco, notas)
+    assert r.piso_usado == "mercado" and r.preco_recomendado >= r.patrimonio_mercado - 0.01
+    assert r.faixa_venda["forcada"] >= min(max(r.piso_patrimonial, 0.0), r.preco_recomendado) - 0.01

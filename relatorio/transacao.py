@@ -80,7 +80,7 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
     bruta, caixa = v.get("divida_bruta") or 0.0, v.get("caixa") or 0.0
     prov = sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
     sem_caixa = (v.get("fluxo_base") or 0) <= 0
-    passivos = _passivos_op(dados) if sem_caixa else 0.0  # base = ativos: fornecedores saem; base = fluxo: já dentro
+    pisos = [x for x in (v.get("patrimonio_mercado"), v.get("piso_patrimonial")) if x is not None]
     pct = getattr(fin, "percentual", 1.0) or 1.0
     custo = getattr(fin, "custo_cotas", None)
     out = []
@@ -90,13 +90,17 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         socio = fv.get(chave)
         if socio is None:
             continue
-        divida = bruta if sem_caixa else bruta - caixa  # sem caixa, o caixa já está nos ativos
+        # valor vindo dos ativos (patrimônio a mercado ou liquidação): o bruto são os ativos, o caixa já está dentro e
+        # saem fornecedores e a dívida bruta; vindo do fluxo, os fornecedores já estão na operação e sai a dívida líquida
+        ativos = sem_caixa or any(abs(socio - x) < 1 for x in pisos if x > 0)
+        passivos = _passivos_op(dados) if ativos else 0.0
+        divida = bruta if ativos else bruta - caixa
         bruto = socio + divida + prov + passivos
         com = comissao(bruto * pct, p)
         preco_cotas = socio * pct
         ganho = preco_cotas - com - (custo or 0.0)
         ir = ir_ganho_capital(ganho, p["ir_ganho_capital"])
-        out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "divida": divida, "divida_bruta": sem_caixa,
+        out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "divida": divida, "divida_bruta": ativos,
                     "passivos": passivos, "provaveis": prov, "socio": socio, "percentual": pct, "preco_cotas": preco_cotas,
                     "comissao": com, "ir": ir, "custo_informado": custo is not None,
                     "sobra": preco_cotas - com - ir, "retencao": v.get("retencao_sugerida") or 0.0})
@@ -131,7 +135,8 @@ def _estrutura(nome: str, preco: float, entrada_pct: float, n: int, earnout: flo
     liquidos = [f - pa for f, pa in zip(fluxos, por_ano)]
     return {"nome": nome, "rotulo": rotulo, "entrada_pct": entrada_pct, "entrada": entrada, "n": n, "parcela": parcela,
             "earnout": earnout, "escrow": escrow, "comissao": com, "no_fechamento": no_fechamento, "total": total,
-            "falta_na_entrada": falta,
+            "falta_na_entrada": falta, "liquido_hoje": vp_socio - com,
+            "parcelas_hoje": vp_socio - com - no_fechamento - escrow, "liquido_nominal": entrada + parcela * n - com,
             "vp_socio": vp_socio, "parcela_caixa": parcela / caixa_mes if caixa_mes > 0 and parcela else None,
             "desembolso": entrada + desembolso_extra,
             "tir": tir(entrada + desembolso_extra, liquidos, terminal) if fluxos else None}

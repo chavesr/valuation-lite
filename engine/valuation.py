@@ -245,7 +245,7 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
             p: dict | None = None, decisoes_contingencias: dict | None = None,
-            piso_escolhido: str = "liquidacao") -> ResultadoValuation:
+            piso_escolhido: str = "mercado") -> ResultadoValuation:
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
@@ -327,7 +327,10 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     # faixa de venda (decisão de 07/11/2026): forçada = conservador, mercado = preço recomendado (base com margem),
     # máximo = otimista — sempre progressivos (a margem não pode jogar o preço abaixo da forçada nem acima do máximo)
     cons_v, otim_v = r.cenarios[0].valor_patrimonio, r.cenarios[2].valor_patrimonio
-    r.faixa_venda = {"forcada": round(max(min(cons_v, r.preco_recomendado), 0.0), 2),
+    # decisão de 09/11/2026: o preço a mercado é o maior entre o fluxo (com margem) e o patrimônio a mercado; a venda
+    # forçada nunca fica abaixo da liquidação ordenada dos ativos
+    r.faixa_venda = {"forcada": round(max(min(max(cons_v, piso_liq if piso_liq is not None else cons_v),
+                                              r.preco_recomendado), 0.0), 2),
                      "mercado": r.preco_recomendado,
                      "maximo": round(max(otim_v, r.preco_recomendado), 2)}
 

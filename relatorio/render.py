@@ -770,7 +770,7 @@ def cap6_transacao(c: dict) -> str:
     me = tr.get("metodos") or {}
     # valor de ida a mercado × métodos  |  cenários de ida a mercado
     if merc:
-        itens = [("Ida a mercado", merc["bruto"], "preço + dívida assumida", True)]
+        itens = [("Ida a mercado", merc["bruto"], "cotas + dívidas assumidas", True)]
         if me.get("dcf") is not None:
             itens.append(("Fluxo de caixa (DCF)", me["dcf"], "base, sem margem" + (" · vale" if me["vale"] == "DCF" else ""), False))
         if me.get("patrimonio") is not None:
@@ -780,8 +780,8 @@ def cap6_transacao(c: dict) -> str:
                           f"a {me['haircut_estoque']:.0%} do valor contábil", False))
         nota_m = ("Valores brutos, antes de dívida e comissão. Conta o maior entre o fluxo de caixa e o patrimônio, "
                   "nunca a soma: o caixa da empresa só existe porque o estoque e os ativos estão operando. "
-                  "O valor de ida a mercado é o preço recomendado (com margem de segurança) mais a dívida que o "
-                  "comprador assume.")
+                  "O valor de ida a mercado é o preço recomendado das cotas mais as dívidas que o comprador "
+                  "assume.")
         if me.get("estoque") and "DEFIS" in (me.get("estoque_fonte") or ""):
             nota_m += f" *Estoque da {me['estoque_fonte']} (o balanço não traz)."
         bloco_m = g.barras_valor(itens) + f'<div class="nota">{escape(nota_m)}</div>'
@@ -795,7 +795,8 @@ def cap6_transacao(c: dict) -> str:
         # quanto sobra para o dono
         dm = [i for i, x in enumerate(cen) if x["chave"] == "mercado"][0]
         cols = "".join(f"<th class='n'>{escape(x['nome'])}</th>" for x in cen)
-        rot_div = "(−) Dívida bancária" if cen[0]["divida_bruta"] else "(−) Dívida bancária, líquida do caixa"
+        rot_div = ("(−) Dívida bancária" + ("¹" if any(not x["divida_bruta"] for x in cen) else "")
+                   if any(x["divida_bruta"] for x in cen) else "(−) Dívida bancária, líquida do caixa")
         linhas = [_linha_tab("Valor de ida a mercado (bruto)", [_mil(x["bruto"]) for x in cen], "sub", dm),
                   _linha_tab(rot_div, [_mil(-x["divida"]) for x in cen], "", dm)]
         if any(x["passivos"] for x in cen):
@@ -820,12 +821,15 @@ def cap6_transacao(c: dict) -> str:
             nota_s += (" *Custo de aquisição das cotas não informado: considerado zero, então o IR real tende a "
                        "ser menor (pedir a declaração de IR do sócio).")
         if any(x["passivos"] for x in cen):
-            nota_s += " Fornecedores saem porque o preço parte dos ativos; quando parte do fluxo, já estão na operação."
+            nota_s += (" Quando o valor vem dos ativos, o bruto são os ativos a mercado (com o caixa) e saem fornecedores "
+                       "e a dívida bruta; quando vem do fluxo, os fornecedores já estão na operação.")
+        if any(x["divida_bruta"] for x in cen) and any(not x["divida_bruta"] for x in cen):
+            nota_s += " ¹Líquida do caixa nos cenários que partem do fluxo."
         aviso = ""
         pesados = [x for x in cen if x["preco_cotas"] <= 0 or x["comissao"] / x["preco_cotas"] > 0.3]
         if pesados:
             x = pesados[-1]
-            aviso = (f"No cenário {x['nome'].lower()}, a comissão mínima de {g.brl_compacto(x['comissao'])} "
+            aviso = (f"No cenário {x['nome'].lower()}, a comissão de {g.brl_compacto(x['comissao'])} "
                      + ("é maior que o valor das cotas" if x["sobra"] < 0 or x["preco_cotas"] <= 0
                         else f"consome {x['comissao'] / x['preco_cotas']:.0%} do valor das cotas")
                      + ": avaliar com o sócio se a ida a mercado compensa, ou outra forma de remuneração da ND.")
@@ -849,12 +853,16 @@ def cap6_transacao(c: dict) -> str:
         linhas = [
             _linha_tab("Entrada", [f"{_mil(x['entrada'])} <small>({x['entrada_pct']:.0%})</small>" for x in es], "", ds),
             _linha_tab("Parcelas mensais (corrigidas pelo CDI)", [parc(x) for x in es], "", ds),
-            _linha_tab("Earn-out (se o lucro se confirmar)", [f"até {_mil(x['earnout'])}" if x["earnout"] else "—" for x in es], "", ds),
             _linha_tab("Escrow (contingências possíveis)", [_mil(x["escrow"]) if x["escrow"] else "—" for x in es], "", ds),
             "<tr class='sub'><td colspan='4'>Sócio</td></tr>",
-            _linha_tab("Recebe no fechamento (após comissão e escrow)", [_mil(x["no_fechamento"]) for x in es], "", ds),
-            _linha_tab("Valor presente pela Selic (sem earn-out)", [_mil(x["vp_socio"]) for x in es], "", ds),
-            _linha_tab("Total possível no prazo", [_mil(x["total"]) for x in es], "", ds),
+            _linha_tab("Na assinatura (entrada − comissão − escrow)", [_mil(x["no_fechamento"]) for x in es], "", ds),
+            _linha_tab("+ Nas parcelas, em valor de hoje", [_mil(x["parcelas_hoje"]) if x["n"] else "—" for x in es], "", ds),
+        ] + ([_linha_tab("+ Escrow, liberado depois", [_mil(x["escrow"]) for x in es], "", ds)] if any(x["escrow"] for x in es)
+             else []) + [
+            _linha_tab("= Total em valor de hoje (o mesmo nas três)", [f"<b>{_mil(x['liquido_hoje'])}</b>" for x in es], "sub", ds),
+            _linha_tab("Total em reais no prazo (parcelas com CDI)", [_mil(x["liquido_nominal"]) for x in es], "margem", ds),
+            _linha_tab("+ Earn-out, se o lucro se confirmar", [f"até {_mil(x['earnout'])}" if x["earnout"] else "—" for x in es],
+                       "margem", ds),
             "<tr class='sub'><td colspan='4'>Investidor</td></tr>",
             _linha_tab("Desembolso no fechamento (entrada + dívida assumida)", [_mil(x["desembolso"]) for x in es], "", ds),
             _linha_tab("Parcela ÷ caixa mensal da empresa", [_pct1(x["parcela_caixa"] * 100) if x["parcela_caixa"] else "—"
@@ -864,7 +872,8 @@ def cap6_transacao(c: dict) -> str:
         nota_p = (f"R$ mil. Premissa: {pg['origem']} ({pg['entrada_aceita']:.0%} de entrada e {pg['prazo']} parcelas). "
                   f"Sugerida = menor entrada, a partir da premissa, com parcela até {pg['limite']:.0%} do caixa mensal "
                   f"projetado ({g.brl_compacto(pg['caixa_mes'])}): a empresa paga a própria compra com folga. Parcelas "
-                  "corrigidas pelo CDI, então o valor presente para o sócio é o mesmo do preço à vista.")
+                  "corrigidas pelo CDI: o sócio recebe menos na assinatura, mas o resto chega corrigido, e em valor de hoje o total é o "
+                  "mesmo do preço à vista (a negociação não muda, muda só quando o dinheiro chega).")
         if sug["earnout"]:
             nota_p += (f" Earn-out até {g.brl_compacto(sug['earnout'])}: a diferença entre o valor sem margem de "
                        "segurança e o preço; o investidor só paga se o caixa vier acima do cenário base, e paga com esse "

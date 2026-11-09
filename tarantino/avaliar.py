@@ -167,9 +167,13 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
     arq_val = saida / "valuation_decisoes.json"
     dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
-    dec_val.setdefault("piso", "liquidacao")
-    dec_val.setdefault("_leia", "piso: liquidacao (ativos em venda forçada; padrão, mais conservador) | mercado "
-                                 "(ativos a valor de mercado, critério da ND). Define o valor mínimo do preço.")
+    leia_antigo = dec_val.get("_leia", "").startswith("piso: liquidacao (ativos em venda forçada; padrão")
+    if leia_antigo and dec_val.get("piso") == "liquidacao":  # padrão antigo gravado sozinho: migra (09/11/2026)
+        dec_val["piso"] = "mercado"
+    dec_val.setdefault("piso", "mercado")
+    dec_val["_leia"] = ("piso: mercado (padrão desde 09/11/2026: o preço a mercado é o maior entre o fluxo com margem "
+                        "e o patrimônio a mercado) | liquidacao (só a venda forçada dos ativos como mínimo, mais "
+                        "conservador). A venda forçada (cenário mínimo) nunca fica abaixo da liquidação.")
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"])
     fin = ler_finalidade(saida)  # D7
