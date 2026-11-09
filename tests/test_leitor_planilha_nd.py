@@ -84,3 +84,43 @@ def test_modelo_em_branco_nao_quebra(tmp_path):
     p = ler_planilha_nd(gerar_modelo(tmp_path / "nd.xlsx", fim="2026-10"))
     assert p.faturamento == [] and all(v == [] for v in p.abas.values())
     assert p.alertas == ["1_Grupo vazia: o grupo econômico não foi informado."]
+
+
+def test_linhas_de_receita_indicadores_e_setor_do_cliente(tmp_path):
+    arq = _preencher(gerar_modelo(tmp_path / "nd.xlsx", fim="2026-10", meses=24))
+    wb = openpyxl.load_workbook(arq)
+    c = wb["5_Clientes"]
+    for j, v in enumerate([2025, "Hospital Alfa", "33.333.333/0001-33", "Hospital", 900_000, "Sim", 24, 2010],
+                          start=1):
+        c.cell(row=5, column=j, value=v)
+    lr = wb["10_Linhas_Receita"]  # 2025 na aba 4: 12 × 450 mil − 150 mil = 5,25 mi
+    for i, linha in enumerate([[2025, "Etiquetas", 4_000_000], [2025, "Manutenção", 300_000]], start=5):
+        for j, v in enumerate(linha, start=1):
+            lr.cell(row=i, column=j, value=v)
+    ind = wb["11_Indicadores"]
+    for i, linha in enumerate([[2025, "Milheiros vendidos", "Volume (quanto foi vendido)", 20_000, "milheiros"],
+                               [2025, "Preço do milheiro", "Preço médio / ticket", "270,00", "R$/milheiro"],
+                               [2024, "Milheiros vendidos", "Volume (quanto foi vendido)", 18_000, "milheiros"]],
+                              start=5):
+        for j, v in enumerate(linha, start=1):
+            ind.cell(row=i, column=j, value=v)
+    wb.save(arq)
+
+    p = ler_planilha_nd(arq)
+    assert p.abas["5_Clientes"][0]["setor_do_cliente"] == "Hospital"
+    assert p.abas["10_Linhas_Receita"][1]["receita_no_ano_r"] == 300_000
+    assert p.abas["11_Indicadores"][1]["valor_no_ano"] == 270.0  # número digitado como texto
+    texto = " | ".join(p.alertas)
+    assert "10_Linhas_Receita: soma de 2025" in texto and "-18%" in texto  # 4,3 mi contra 5,25 mi (abr/25 sem o CNPJ B)
+    assert "11_Indicadores: em 2025" not in texto  # 20.000 × 270 = 5,4 mi, +3%: bate
+    assert "11_Indicadores: 2024 precisa de exatamente um volume e um preço" in texto
+
+
+def test_planilha_v1_0_sem_abas_novas_nao_gera_alerta(tmp_path):
+    arq = _preencher(gerar_modelo(tmp_path / "nd.xlsx", fim="2026-10", meses=24))
+    wb = openpyxl.load_workbook(arq)
+    del wb["10_Linhas_Receita"], wb["11_Indicadores"]
+    wb["5_Clientes"].delete_cols(4)  # coluna 'Setor do cliente'
+    wb.save(arq)
+    texto = " | ".join(ler_planilha_nd(arq).alertas)
+    assert "10_Linhas_Receita" not in texto and "11_Indicadores" not in texto and "Setor" not in texto

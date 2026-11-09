@@ -27,7 +27,7 @@ Encaminhe ao seu contador o e-mail-modelo que enviamos. Ele sabe exatamente o qu
 - Alguns bancos limitam o período por arquivo (ex.: 90 dias). Não tem problema: envie vários arquivos.
 
 ### 3. Planilha ND de Captação
-Uma planilha única, com instruções em cada aba: empresas do grupo, sócios, contas, faturamento mensal, principais clientes, dívidas, equipe (sem nomes), estoques e bens, e ajustes.
+Uma planilha única, com instruções em cada aba: empresas do grupo, sócios, contas, faturamento mensal, principais clientes (com o setor de cada um), dívidas, equipe (sem nomes), estoques e bens, ajustes e, se possível, a receita por linha de produto e os indicadores que explicam o faturamento (quanto vendeu × preço médio).
 
 **Aba 9 (Ajustes):** despesas pessoais pagas pela empresa, gastos que não vão se repetir, familiares na folha… Informar isso **aumenta o lucro ajustado** e costuma valorizar a empresa.
 

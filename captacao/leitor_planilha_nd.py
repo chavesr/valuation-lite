@@ -130,7 +130,7 @@ def _mapear_cabecalho(ws, aba: Aba, alertas: list[str]) -> dict[int, Coluna]:
             mapa[j] = col
         else:
             alertas.append(f"{aba.nome}: coluna desconhecida {titulo!r} ignorada.")
-    faltam = [c.titulo for c in aba.colunas if c not in mapa.values()]
+    faltam = [c.titulo for c in aba.colunas if c not in mapa.values() and not c.opcional]
     if faltam:
         alertas.append(f"{aba.nome}: colunas não encontradas: {', '.join(faltam)}.")
     return mapa
@@ -147,7 +147,7 @@ def _ler_aba(ws, aba: Aba, alertas: list[str]) -> list[dict]:
         for j, col in mapa.items():
             v, onde = valores.get(j), f"{aba.nome}!{row[j - 1].column_letter}{i}"
             k = chave(col.titulo)
-            if col.formato == R or (col.formato and "%" in col.formato) or k.startswith(("ano", "horas", "parcelas",
+            if col.numero or col.formato == R or (col.formato and "%" in col.formato) or k.startswith(("ano", "horas", "parcelas",
                                                                                             "funcionarios", "terceiros",
                                                                                             "duracao", "cliente_desde")):
                 n = _numero(v, onde, alertas)
@@ -251,6 +251,48 @@ def _verificar(p: PlanilhaND) -> None:
                      "meses: possível divisão para ficar no Simples (verificar grupo econômico)."
                      .replace(",", "."))
 
+    _verificar_receita_por_ano(p)
+
+
+VOLUME, PRECO = "Volume (quanto foi vendido)", "Preço médio / ticket"
+
+
+def _faturamento_por_ano(p: PlanilhaND) -> dict[int, float]:
+    """Faturamento anual da aba 4, só dos anos com os 12 meses preenchidos."""
+    por_ano: dict[int, dict[str, float]] = {}
+    for comp, v in p.faturamento_mensal_total().items():
+        por_ano.setdefault(int(comp[:4]), {})[comp] = v
+    return {a: sum(m.values()) for a, m in por_ano.items() if len(m) == 12}
+
+
+def _verificar_receita_por_ano(p: PlanilhaND) -> None:
+    """Linhas de receita e volume × preço conferidos contra o faturamento do ano (tolerância de 15%)."""
+    fat = _faturamento_por_ano(p)
+    linhas: dict[int, float] = {}
+    for l in p.abas.get("10_Linhas_Receita", []):
+        if l.get("ano") and l.get("receita_no_ano_r") is not None:
+            linhas[int(l["ano"])] = linhas.get(int(l["ano"]), 0.0) + l["receita_no_ano_r"]
+    for ano, soma in sorted(linhas.items()):
+        if ano in fat and fat[ano] and abs(soma / fat[ano] - 1) > 0.15:
+            p.alertas.append(f"10_Linhas_Receita: soma de {ano} (R$ {soma:,.0f}) difere do faturamento da aba 4 "
+                             f"(R$ {fat[ano]:,.0f}) em {soma / fat[ano] - 1:+.0%}.".replace(",", "."))
+    ind: dict[int, dict[str, list[float]]] = {}
+    for l in p.abas.get("11_Indicadores", []):
+        if l.get("ano") and l.get("tipo") in (VOLUME, PRECO) and l.get("valor_no_ano") is not None:
+            ind.setdefault(int(l["ano"]), {}).setdefault(l["tipo"], []).append(l["valor_no_ano"])
+    for ano, tipos in sorted(ind.items()):
+        vol, pre = tipos.get(VOLUME, []), tipos.get(PRECO, [])
+        if len(vol) != 1 or len(pre) != 1:
+            if vol or pre:
+                p.alertas.append(f"11_Indicadores: {ano} precisa de exatamente um volume e um preço para a conta "
+                                 f"volume × preço (tem {len(vol)} e {len(pre)}).")
+            continue
+        ref = fat.get(ano) or linhas.get(ano)
+        if ref and abs(vol[0] * pre[0] / ref - 1) > 0.15:
+            p.alertas.append(f"11_Indicadores: em {ano}, volume × preço = R$ {vol[0] * pre[0]:,.0f}, "
+                             f"{vol[0] * pre[0] / ref - 1:+.0%} contra o faturamento do ano (R$ {ref:,.0f})."
+                             .replace(",", "."))
+
 
 # --------------------------------------------------------------------------- entrada
 
@@ -263,7 +305,8 @@ def ler_planilha_nd(caminho: str | Path) -> PlanilhaND:
     faturamento, obs = [], {}
     for aba in ABAS:
         if aba.nome not in wb.sheetnames:
-            alertas.append(f"Aba {aba.nome} não encontrada (renomeada ou apagada).")
+            if not aba.opcional:
+                alertas.append(f"Aba {aba.nome} não encontrada (renomeada ou apagada).")
             continue
         ws = wb[aba.nome]
         if aba.nome == ABA_FATURAMENTO:

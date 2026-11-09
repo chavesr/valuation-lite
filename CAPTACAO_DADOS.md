@@ -36,7 +36,7 @@ A auditoria do data-room do case A (out/2026) mostrou o problema típico: **muit
 |---|---|---|
 | Documentos contábeis e fiscais | contador | `02_Email_Contador.md` |
 | Extratos OFX (24 meses, todas as contas) | empreendedor | `01_Guia_Empreendedor.md` |
-| Planilha ND de Captação (9 abas, lida por código) | empreendedor | `Planilha_ND_Captacao.xlsx`, gerada por `captacao/planilha_nd.py` |
+| Planilha ND de Captação (11 abas, lida por código; 10 e 11 opcionais) | empreendedor | `Planilha_ND_Captacao.xlsx`, gerada por `captacao/planilha_nd.py` |
 | Questionário (núcleo + módulos indústria/serviços/comércio) e entrevista | sócios + analista | Google Form gerado por `formulario/criar_formulario.gs`; versão em texto `03_Questionario_Cliente.md`; `04_Roteiro_Entrevista.md` |
 
 **Leitura sem tokens:**

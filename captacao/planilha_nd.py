@@ -20,7 +20,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from captacao.util import meses_entre
 
-VERSAO = "1.0"
+VERSAO = "1.1"  # 1.1: setor do cliente, linhas de receita e indicadores operacionais (opcionais)
 LINHAS_PADRAO = 60
 
 LISTAS = {
@@ -38,6 +38,7 @@ LISTAS = {
                     "Receita que não vai se repetir", "Familiar na folha sem função na operação",
                     "Aluguel pago a sócio ou parente", "Despesa de outra empresa do sócio", "Outro"],
     "periodicidade": ["Mensal", "Anual", "Única"],
+    "tipo_indicador": ["Volume (quanto foi vendido)", "Preço médio / ticket", "Outro indicador"],
 }
 
 
@@ -48,6 +49,8 @@ class Coluna:
     lista: str | None = None
     largura: int = 18
     formato: str | None = None  # '#,##0.00' para R$, '0.0%' para percentual
+    numero: bool = False  # número sem ser R$ nem % (ex.: volume vendido)
+    opcional: bool = False  # incluída depois da v1.0: planilha antiga sem ela não gera alerta
 
 
 @dataclass
@@ -56,6 +59,7 @@ class Aba:
     titulo: str
     instrucao: str
     colunas: list[Coluna] = field(default_factory=list)
+    opcional: bool = False  # incluída depois da v1.0: planilha antiga sem ela não gera alerta
 
 
 R = "#,##0.00"
@@ -91,6 +95,8 @@ ABAS: list[Aba] = [
         "Os 20 maiores clientes de cada um dos últimos 3 anos. Um cliente = uma linha por ano "
         "(some todas as compras/parcelas do mesmo cliente).",
         [Coluna("Ano", largura=8), Coluna("Cliente", largura=36), Coluna("CNPJ/CPF do cliente", largura=22),
+         Coluna("Setor do cliente", "Em que ramo o cliente atua. Ex.: indústria alimentícia, hospital, varejo, "
+                "construtora, órgão público", largura=26, opcional=True),
          Coluna("Faturamento no ano (R$)", formato=R), Coluna("Tem contrato?", lista="sim_nao", largura=14),
          Coluna("Duração do contrato (meses)", largura=14), Coluna("Cliente desde (ano)", largura=14)]),
     Aba("6_Dividas", "Dívidas e parcelamentos",
@@ -119,6 +125,25 @@ ABAS: list[Aba] = [
         [Coluna("Descrição", largura=40), Coluna("Tipo", lista="tipo_ajuste", largura=36),
          Coluna("Valor (R$)", formato=R), Coluna("Periodicidade", lista="periodicidade", largura=14),
          Coluna("Observação", largura=30)]),
+    Aba("10_Linhas_Receita", "Receita por linha de produto ou serviço",
+        "Como o faturamento se divide entre os produtos ou serviços, em cada um dos últimos 3 anos. Uma linha por "
+        "produto/serviço em cada ano. Ex.: 'Etiquetas sob encomenda', 'Revenda de impressoras', 'Manutenção'. "
+        "A soma de cada ano deve ficar perto do faturamento do ano.",
+        [Coluna("Ano", largura=8), Coluna("Linha de receita", "Nome do produto, serviço ou família de produtos",
+                                          largura=36),
+         Coluna("Receita no ano (R$)", formato=R), Coluna("Observação", largura=40)],
+        opcional=True),
+    Aba("11_Indicadores", "Indicadores operacionais",
+        "Os números que explicam o faturamento: quanto foi vendido (volume) e a que preço médio, em cada um dos "
+        "últimos 3 anos. Ex.: milheiros de etiquetas × preço do milheiro; diárias vendidas × diária média; "
+        "clientes atendidos × ticket médio. Volume × preço deve dar aproximadamente o faturamento do ano.",
+        [Coluna("Ano", largura=8), Coluna("Indicador", "Ex.: milheiros de etiquetas vendidos, preço médio do milheiro",
+                                          largura=36),
+         Coluna("Tipo", lista="tipo_indicador", largura=28),
+         Coluna("Valor no ano", "Volume do ano inteiro ou preço médio do ano", formato="#,##0.00", numero=True),
+         Coluna("Unidade", "Ex.: milheiros, diárias, clientes, R$ por milheiro", largura=20),
+         Coluna("Observação", largura=36)],
+        opcional=True),
 ]
 
 AZUL = PatternFill("solid", fgColor="1F3864")
@@ -146,7 +171,7 @@ def _aba_instrucoes(wb: Workbook) -> None:
          "mais preciso o valuation e menor o desconto de risco aplicado.", None),
         ("", None),
         ("Como preencher", Font(bold=True, size=12)),
-        ("1. Preencha as abas na ordem (1 a 9). Campos com lista: clique na célula e escolha a opção.", None),
+        ("1. Preencha as abas na ordem (1 a 11; as abas 10 e 11 ajudam muito, mas são opcionais). Campos com lista: clique na célula e escolha a opção.", None),
         ("2. Valores em reais, sem o símbolo R$. Use estimativas quando não tiver o número exato e indique na "
          "observação.", None),
         ("3. Considere TODOS os CNPJs do grupo, mesmo os que parecem secundários.", None),
