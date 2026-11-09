@@ -50,6 +50,8 @@ p, ul.marcador li, ul li { text-align: justify; hyphens: auto; -webkit-hyphens: 
 .kpi .val { font-size: 12.5pt; font-weight: 700; color: var(--ink); margin-top: 1mm; white-space: nowrap; }
 .kpi .obs { font-size: 6.8pt; color: var(--gray2); line-height: 1.25; margin-top: .6mm; }
 ul.marcador { list-style: none; padding: 0; margin: 0 0 2mm; }
+ol.passos { margin: 1.5mm 0 2mm; padding-left: 5mm; }
+ol.passos li { margin-bottom: 1.4mm; text-align: justify; }
 ul.marcador li { position: relative; padding-left: 3.2mm; margin-bottom: 1.1mm; }
 ul.marcador li::before { content: ""; position: absolute; left: 0; top: 1.5mm; width: 1.5mm; height: 1.5mm;
                          background: var(--ink2); border-radius: 50%; }
@@ -885,45 +887,68 @@ def cap6_transacao(c: dict) -> str:
         if sug["parcela_caixa"] and pg["entrada_aceita"] < sug["entrada_pct"]:
             nota_p += (f" Com {pg['entrada_aceita']:.0%} de entrada a parcela tomaria "
                        f"{_pct1(es[1]['parcela_caixa'] * 100)} do caixa mensal: acima do limite.")
-        h.append(_secao("Estrutura de pagamento sugerida", "relogio",
-                        f'<table class="compacta pagamento"><tr><th></th>{cab}</tr>{"".join(linhas)}</table>'
-                        f'<div class="nota">{escape(nota_p)}</div>'))
-        # fluxograma da estrutura sugerida
-        etapas = [("Fechamento", g.brl_compacto(sug["entrada"]),
-                   f"entrada de {sug['entrada_pct']:.0%}; a comissão ND ({g.brl_compacto(sug['comissao'])}) sai daqui", True)]
-        if sug["escrow"]:
-            etapas.append(("Escrow", g.brl_compacto(sug["escrow"]),
-                           "em conta vinculada; liberado ao sócio quando as contingências possíveis prescreverem", False))
-        else:
-            etapas.append(("Garantias", "Cotas em garantia",
-                           "cotas alienadas ao sócio até a última parcela (sem contingência que peça escrow)",
-                           False))
+        sec_tabela = _secao("Comparação das formas de pagamento", "relogio",
+                            f'<table class="compacta pagamento"><tr><th></th>{cab}</tr>{"".join(linhas)}</table>'
+                            f'<div class="nota">{escape(nota_p)}</div>')
+        # como a operação fecha, em linguagem simples (texto por código, com os números do case)
+        em = c.get("empresa_curto") or "a empresa"
+        div = (merc or {}).get("divida", 0.0) + (merc or {}).get("provaveis", 0.0)
+        bc = g.brl_compacto
+        passos = [f"<b>No dia da assinatura</b>, o comprador paga {bc(sug['entrada'])} "
+                  f"({sug['entrada_pct']:.0%} do preço). Desse valor sai a comissão da Nova Direção "
+                  f"({bc(sug['comissao'])})" + (f" e {bc(sug['escrow'])} vão para a reserva de riscos (passo 4)"
+                                                if sug["escrow"] else "")
+                  + f", e o sócio fica com {bc(sug['no_fechamento'])}."
+                  + (f" O comprador também assume as dívidas da empresa ({bc(div)})." if div > 0 else "")]
         if sug["n"]:
-            etapas.append(("Parcelas", f"{sug['n']}× {g.brl_compacto(sug['parcela'])}",
-                           f"corrigidas pelo CDI, pagas com o caixa da empresa ({_pct1(sug['parcela_caixa'] * 100)} do "
-                           "caixa mensal)" if sug["parcela_caixa"] else "corrigidas pelo CDI", False))
+            passos.append(
+                f"<b>Nos {sug['n']} meses seguintes</b>, o comprador paga {sug['n']} parcelas de cerca de "
+                f"{bc(sug['parcela'])}. Elas são corrigidas pelo CDI, o mesmo rendimento de uma aplicação de renda "
+                "fixa: assim o sócio não perde dinheiro por receber depois."
+                + (f" Cada parcela equivale a {sug['parcela_caixa']:.0%} do caixa que a própria empresa gera por mês "
+                   f"({bc(pg['caixa_mes'])}): o comprador consegue pagar com o resultado do negócio."
+                   if sug["parcela_caixa"] else ""))
+            passos.append("<b>Até a última parcela</b>, as cotas ficam em garantia para o sócio: se o comprador "
+                          "deixar de pagar, a empresa volta para ele.")
+        if sug["escrow"]:
+            passos.append(f"<b>Reserva de riscos (escrow):</b> {bc(sug['escrow'])} ficam numa conta bancária "
+                          "vinculada, que nenhum dos dois pode movimentar sozinho. Se os riscos mapeados (dívidas "
+                          "fiscais ou trabalhistas antigas) não aparecerem até prescrever, o dinheiro é liberado ao "
+                          "sócio; se aparecerem, ele paga a conta.")
         if sug["earnout"]:
             meta = pg.get("earnout_meta")
-            det = (f"no mês 24, proporcional ao caixa anual entre {g.brl_compacto(pg['earnout_base'])} e "
-                   f"{g.brl_compacto(meta)}" if meta else "no mês 24, se o caixa superar o cenário base")
-            etapas.append(("Earn-out", f"até {g.brl_compacto(sug['earnout'])}", det, False))
+            passos.append(
+                f"<b>Bônus por resultado (earn-out), no mês 24:</b> o sócio pode receber até {bc(sug['earnout'])} a "
+                "mais se o lucro se confirmar"
+                + (f": o valor é proporcional ao caixa anual entre {bc(pg['earnout_base'])} (o que os documentos "
+                   f"comprovam hoje) e {bc(meta)} (o que o sócio declara)." if meta else ".")
+                + " Se o lucro não vier, o comprador não paga o bônus; se vier, ele paga com esse lucro extra.")
+        resumo = (f"<b>Em resumo:</b> o sócio recebe {bc(sug['liquido_hoje'])} líquidos em valor de hoje (o mesmo que "
+                  "receberia à vista)" + (f", mais até {bc(sug['earnout'])} se o lucro se confirmar" if sug["earnout"] else "")
+                  + f". O comprador coloca {bc(sug['desembolso'])} no dia da assinatura (entrada + dívidas assumidas)"
+                  + (f" e tem retorno estimado de {pct(sug['tir'])} ao ano no cenário base." if sug["tir"] is not None else "."))
+        texto = (f'<p>Na estrutura sugerida, o comprador paga <b>{bc(v["preco_recomendado"])}</b> pelas cotas da '
+                 f'{escape(em)}, em etapas:</p><ol class="passos">' + "".join(f"<li>{x}</li>" for x in passos)
+                 + f"</ol><p>{resumo}</p>")
+        etapas = [("Dia 1 · assinatura", bc(sug["entrada"]), f"o sócio fica com {bc(sug['no_fechamento'])}", True)]
+        if sug["n"]:
+            etapas.append((f"Meses 1 a {sug['n']}", f"{sug['n']} × {bc(sug['parcela'])}", "parcelas corrigidas pelo CDI",
+                           False))
+        if sug["escrow"]:
+            etapas.append(("Reserva de riscos", bc(sug["escrow"]), "liberada ao sócio se os riscos não aparecerem", False))
+        if sug["earnout"]:
+            etapas.append(("Mês 24 · bônus", f"até {bc(sug['earnout'])}", "só se o lucro se confirmar", False))
+        h.append(_secao("Como a operação fecha, passo a passo", "calendario", texto + g.fluxograma(etapas)))
+        h.append(sec_tabela)
         crono = (g.cronograma_pagamento(sug["n"], sug["parcela"], pg["caixa_mes"], pg["limite"], sug["entrada"])
                  if sug["n"] else "")
-        h.append(_secao("Como a operação fecha (estrutura sugerida)", "calendario", g.fluxograma(etapas)))
         if crono:
-            cond = [f"Comissão ND de {g.brl_compacto(sug['comissao'])} paga na assinatura, sobre o valor de ida a mercado.",
-                    f"Parcelas corrigidas pelo CDI; cada uma usa {_pct1(sug['parcela_caixa'] * 100)} do caixa mensal "
-                    f"projetado (limite da casa: {pg['limite']:.0%})." if sug["parcela_caixa"] else
-                    "Parcelas corrigidas pelo CDI.",
-                    "Cotas alienadas ao sócio até a última parcela: se o comprador não pagar, as cotas voltam."]
-            if sug["escrow"]:
-                cond.append(f"Escrow de {g.brl_compacto(sug['escrow'])} em conta vinculada, liberado ao sócio quando "
-                            "as contingências possíveis prescreverem.")
-            if sug["earnout"]:
-                cond.append(f"Earn-out até {g.brl_compacto(sug['earnout'])}, medido pelo caixa anual e pago no mês 24.")
-            h.append('<div class="duas"><div><div class="legenda-graf">Parcela mensal (laranja) contra o caixa '
-                     'mensal projetado (cinza)</div>' + crono + '</div><div>'
-                     + _secao("Condições da estrutura sugerida", "positivo", _ul(cond)) + '</div></div>')
+            leitura_g = [f"Barra cinza: o caixa que a empresa gera por mês no cenário base ({bc(pg['caixa_mes'])}).",
+                         f"Barra laranja: a parcela paga ao sócio ({bc(sug['parcela'])}).",
+                         f"Linha tracejada: o limite da casa, {pg['limite']:.0%} do caixa. Abaixo dela, a empresa paga "
+                         "a própria compra e ainda sobra dinheiro para o dia a dia."]
+            h.append('<div class="duas"><div><div class="legenda-graf">A empresa consegue pagar as parcelas?</div>'
+                     + crono + '</div><div>' + _secao("Como ler o gráfico", "positivo", _ul(leitura_g)) + '</div></div>')
     h += ['<div class="disclaimer">Relatório preparado pela Nova Direção com base em documentos e informações fornecidos '
           'pela empresa e por seus sócios, não auditados. Os valores são estimativas para orientar a negociação e não '
           'constituem garantia de preço. A estrutura de pagamento é uma simulação, não uma oferta; o IR do sócio é '

@@ -772,15 +772,17 @@ def football_field(faixas: list[tuple[str, float, float, str]], marcadores: list
 def fluxograma(etapas: list[tuple[str, str, str, bool]]) -> str:
     """Etapas da operação em caixas ligadas por setas: (título, valor, detalhe, destaque). Destaque com borda laranja."""
     n = max(len(etapas), 1)
-    L, A, gap = 660, 100, 18
+    L, gap = 660, 18
     w = (L - gap * (n - 1)) / n
+    linhas = max((len(_quebrar(det, int(w / 4.4))[:4]) for _, _, det, _ in etapas), default=1)
+    A = 60 + 10.5 * linhas
     c = []
     for i, (tit, val, det, dest) in enumerate(etapas):
         x0 = i * (w + gap)
         c.append(f'<rect x="{x0 + 0.5:.1f}" y="4.5" width="{w - 1:.1f}" height="{A - 9}" rx="5" fill="#F5F5F5" '
                  f'stroke="{LARANJA if dest else LINHA}" stroke-width="{1.6 if dest else 1}"/>')
         c.append(f'<text x="{x0 + 9:.1f}" y="21" font-size="8" fill="{MUTED}" font-weight="700">'
-                 f'{escape(f"{i + 1}. {tit}".upper())}</text>')
+                 f'{escape(tit.upper())}</text>')
         c.append(f'<text x="{x0 + 9:.1f}" y="40" font-size="12" fill="{TINTA}" font-weight="700">{escape(val)}</text>')
         for j, linha in enumerate(_quebrar(det, int(w / 4.4))[:4]):
             c.append(f'<text x="{x0 + 9:.1f}" y="{55 + j * 10.5}" font-size="7.8" fill="{TINTA_SUAVE}">{escape(linha)}</text>')
