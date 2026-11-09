@@ -803,14 +803,15 @@ def cap6_transacao(c: dict) -> str:
         rot_div = ("(−) Dívida bancária" + ("¹" if any(not x["divida_bruta"] for x in cen) else "")
                    if any(x["divida_bruta"] for x in cen) else "(−) Dívida bancária, líquida do caixa")
         linhas = [_linha_tab("Valor de ida a mercado (bruto)", [_mil(x["bruto"]) for x in cen], "sub", dm),
+                  _linha_tab("(−) Comissão ND", [_mil(-x["comissao"]) + f" <small>({x['comissao'] / x['bruto'] * 100:.0f}%)</small>"
+                                                if x["bruto"] else "—" for x in cen], "", dm),
                   _linha_tab(rot_div, [_mil(-x["divida"]) for x in cen], "", dm)]
         if any(x["passivos"] for x in cen):
             linhas.append(_linha_tab("(−) Fornecedores e obrigações", [_mil(-x["passivos"]) for x in cen], "", dm))
         linhas.append(_linha_tab("(−) Contingências prováveis (jurídico)",
                                  [_mil(-x["provaveis"]) if x["provaveis"] else "—" for x in cen], "", dm))
-        linhas.append(_linha_tab("= Valor das cotas (pago ao sócio)", [_mil(x["preco_cotas"]) for x in cen], "sub", dm))
-        linhas.append(_linha_tab("(−) Comissão ND", [_mil(-x["comissao"]) + f" <small>({x['comissao'] / x['bruto'] * 100:.0f}%)</small>"
-                                                   if x["bruto"] else "—" for x in cen], "", dm))
+        linhas.append(_linha_tab("= Recebe pelas cotas, já sem a comissão", [_mil(x["preco_cotas"] - x["comissao"]) for x in cen],
+                                 "sub", dm))
         linhas.append(_linha_tab("(−) IR sobre o ganho de capital" + ("" if cen[0]["custo_informado"] else "*"),
                                  [_mil(-x["ir"]) for x in cen], "", dm))
         linhas.append(_linha_tab("= Sobra para o dono", [f"<b>{_mil(x['sobra'])}</b>" for x in cen], "total", dm))
