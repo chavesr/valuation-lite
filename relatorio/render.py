@@ -21,9 +21,22 @@ from relatorio.icones import icone
 
 CSS = """
 @page { size: A4; margin: 15mm 14mm 16mm 14mm;
+        @top-right { content: __LOGO__; vertical-align: bottom; padding-bottom: 3mm; }
         @bottom-left { content: "NOVA DIREÇÃO  ·  Relatório de valuation  ·  confidencial"; font: 7pt Helvetica, Arial,
                        sans-serif; color: #8C8C8C; letter-spacing: .04em; }
         @bottom-right { content: "Pág. " counter(page); font: 7pt Helvetica, Arial, sans-serif; color: #8C8C8C; } }
+@page capa { margin: 0; @top-right { content: none; } @bottom-left { content: none; } @bottom-right { content: none; } }
+.capa { page: capa; position: relative; height: 296.5mm; overflow: hidden; background: #111111; color: #FFFFFF; }
+.capa .logo { position: absolute; top: 22mm; left: 20mm; width: 62mm; }
+.capa .meio { position: absolute; left: 20mm; right: 20mm; top: 108mm; }
+.capa .rotulo { font-size: 9pt; letter-spacing: .28em; color: var(--laranja); font-weight: 700; }
+.capa h1 { color: #FFFFFF; font-size: 34pt; line-height: 1.08; margin: 5mm 0 4mm; font-weight: 700; }
+.capa .razao { font-size: 10pt; color: #BFBFBF; }
+.capa .traco { width: 24mm; height: 1.4mm; background: var(--laranja); margin: 9mm 0 7mm; }
+.capa .dados { display: grid; grid-template-columns: 34mm 1fr; gap: 2.4mm 4mm; font-size: 9.5pt; }
+.capa .dados b { color: #8C8C8C; font-weight: 400; }
+.capa .rodape { position: absolute; left: 20mm; right: 20mm; bottom: 18mm; font-size: 7.6pt; color: #8C8C8C;
+                border-top: 1px solid #333333; padding-top: 4mm; line-height: 1.5; }
 :root { --laranja:#FF9900; --laranja-claro:#FFF4E3; --cinza-quadro:#F2F2F2; --ink:#000000; --ink2:#1A1A1A;
         --gray:#6B6B6B; --gray2:#8C8C8C; --line:#E6E6E6; }
 * { box-sizing: border-box; }
@@ -127,6 +140,41 @@ def _ul(itens: list[str], classe: str = "marcador") -> str:
     return f"<ul class='{classe}'>" + "".join(f"<li>{escape(i)}</li>" for i in itens) + "</ul>"
 
 
+ASSETS = Path(__file__).resolve().parent / "assets"
+
+
+def _logo_b64(branco: bool = False) -> str:
+    import base64
+    arq = ASSETS / ("logo_nd_branco.png" if branco else "logo_nd.png")
+    return base64.b64encode(arq.read_bytes()).decode() if arq.exists() else ""
+
+
+def _logo_cabecalho() -> str:
+    """Logo da ND para o cabeçalho das páginas: SVG com tamanho fixo (a margem da página não aceita CSS de largura)."""
+    import base64
+    b64 = _logo_b64()
+    if not b64:
+        return "none"
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="96" height="13" '
+           f'viewBox="0 0 740 100"><image width="740" height="100" xlink:href="data:image/png;base64,{b64}"/></svg>')
+    return f"url(data:image/svg+xml;base64,{base64.b64encode(svg.encode()).decode()})"
+
+
+def capa(c: dict) -> str:
+    perfil = (c.get("qual") or {}).get("perfil") or {}
+    razao = (c.get("empresas_grupo") or [("", "")])[0][0] or c["empresa"]
+    dados = [("Setor", c.get("setor") or "—"), ("Sede", perfil.get("cidade_uf") or "—"),
+             ("Finalidade", c.get("finalidade") or "—"), ("Data", c["data"])]
+    b64 = _logo_b64(branco=True)
+    logo = f'<img class="logo" src="data:image/png;base64,{b64}" alt="Nova Direção">' if b64 else ""
+    return (f'<section class="capa">{logo}<div class="meio"><div class="rotulo">RELATÓRIO DE VALUATION</div>'
+            f'<h1>{escape(c["empresa_curto"])}</h1><div class="razao">{escape(razao)}</div><div class="traco"></div>'
+            '<div class="dados">' + "".join(f"<b>{escape(k)}</b><span>{escape(v)}</span>" for k, v in dados)
+            + '</div></div><div class="rodape">Preparado pela Nova Direção com base em documentos e informações '
+            'fornecidos pela empresa e por seus sócios, não auditados. Documento confidencial: não compartilhe sem '
+            'autorização.</div></section>')
+
+
 def _cab(n: int, titulo: str, c: dict) -> str:
     return (f'<div class="cab"><h2>{n:02d}. {escape(titulo)} | {escape(c["empresa_curto"])}</h2>'
             f'<div class="sub">Setor: {escape(c.get("setor") or "—")} | {escape(c["data"])} | '
@@ -200,6 +248,7 @@ def cap1_visao_geral(c: dict) -> str:
                     'capítulo 5.</div>')
     else:
         bloco_ev = '<div class="nota">Sem caixa positivo projetado: comparação com a renda fixa não se aplica.</div>'
+    vt = (c.get("financeiro") or {}).get("verticais") or []
     notas_radar = [(nome.split(" e ")[0].replace("Confiabilidade da informação", "Informação")
                     .replace("Setor", "Setor/fosso"), nota) for nome, nota, _ in c["notas"]]
     return "".join([
@@ -210,7 +259,9 @@ def cap1_visao_geral(c: dict) -> str:
         _secao("Por que olhar", "positivo", _ul(t["por_que_olhar"])
                + '<div class="legenda-graf">Receita e EBITDA econômico (R$)</div>' + g.colunas_mini(c["grafico_dre"])),
         _secao("O que pesa contra", "alerta", _ul(t["o_que_pesa_contra"])
-               + '<div class="legenda-graf">Risco por área (5 = mais sólido)</div>' + g.radar(notas_radar)),
+               + (f'<div class="legenda-graf">Risco por vertical (5 = mais sólido)</div>'
+                  + g.radar_verticais([(x["vertical"], x["nota"]) for x in vt]) if vt else
+                  '<div class="legenda-graf">Risco por área (5 = mais sólido)</div>' + g.radar(notas_radar))),
         '</div><div class="duas">',
         _secao("Quanto vale", "valor", g.barras_valor(valores)
                + '<div class="nota">Valores para 100% das cotas, já descontadas dívidas e contingências prováveis.</div>'),
@@ -985,9 +1036,10 @@ CAPITULOS = {1: cap1_visao_geral, 2: cap2_empresa, 3: cap3_mercado, 4: cap4_fina
 
 def montar_html(c: dict, capitulos: list[int] | None = None) -> str:
     """`c` é o contexto montado por tarantino.relatorio; `capitulos` permite gerar só alguns (prévia)."""
-    corpo = "".join(CAPITULOS[n](c) for n in (capitulos or sorted(CAPITULOS)))
+    corpo = (capa(c) if capitulos is None else "") + "".join(CAPITULOS[n](c) for n in (capitulos or sorted(CAPITULOS)))
+    css = CSS.replace("__LOGO__", _logo_cabecalho())
     return ("<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><title>Valuation — "
-            f"{escape(c['empresa'])}</title><style>{CSS}</style></head><body>{corpo}</body></html>")
+            f"{escape(c['empresa'])}</title><style>{css}</style></head><body>{corpo}</body></html>")
 
 
 def navegador() -> str | None:
