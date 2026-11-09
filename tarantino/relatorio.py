@@ -17,6 +17,7 @@ from pathlib import Path
 from engine.finalidade import ler_finalidade
 from julgamento.esquemas import TextosRelatorio
 from julgamento.executor import ErroJulgamento, executar_claude_code, extrair_json
+from relatorio import financeiro as calc_fin
 from relatorio.render import html_para_pdf, montar_html
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
@@ -240,17 +241,26 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     ipca = (sgs.get("ipca_12m") or {}).get("valor")
     focus_selic = (focus.get("selic") or {}).get("medianas") or {}
     focus_ipca = (focus.get("ipca") or {}).get("medianas") or {}
+    dre_c = calc_fin.dre_contabil(dados)
+    financeiro = {"dre": calc_fin.tabela_dre(dre_c), "custos": calc_fin.composicao_custos(dre_c),
+                  "receita_anual": calc_fin.receita_anual(dre_c), "mensal": calc_fin.receita_mensal(dados),
+                  "parcial": next(({"rotulo": c_, "rb": a["rb"]} for c_, a in zip(dre_c["colunas"], dre_c["abertas"])
+                                   if a["meses"] < 12 and a.get("rb")), None),
+                  "ponte": calc_fin.ponte_economica(dre_c, dres, v["periodo_base"]),
+                  "giro": calc_fin.giro_divida(dados, dre_c, dres, v), "verticais": calc_fin.verticais_risco(v, qual),
+                  "clientes": dados.concentracao_clientes}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
             "qual": qual, "ano": hoje.year, "focus_selic": focus_selic, "focus_ipca": focus_ipca,
             "juro_real": _juro_real(), "sgs": sgs, "focus": focus, "cnpjs": len(dados.empresa.cnpjs),
+            "empresas_grupo": [(e.razao_social, e.cnpj) for e in dados.empresa.cnpjs],
             "regime": base.get("regime_comprador", "").split(" (")[0],
             "case_id": estado.id, "data": f"{MESES[hoje.month - 1]} de {hoje.year}",
             "finalidade": fin.descricao, "pedido_vendedor": fin.pedido_vendedor, "textos": textos.model_dump(),
             "valuation": v, "ficha": ficha, "macro": macro, "selic_fonte": selic_fonte,
             "dre": {"periodos": [d["periodo"] for d in ordenados], "linhas": linhas},
             "grafico_dre": [(d["periodo"], valor(d, "Receita bruta"), d["ebitda"]) for d in ordenados],
-            "riscos": riscos, "notas": notas, "leitura_finalidade": v.get("leitura_finalidade") or []}
+            "riscos": riscos, "notas": notas, "leitura_finalidade": v.get("leitura_finalidade") or [], "financeiro": financeiro}
 
 
 def gerar_relatorio(pasta_empresa: str | Path, modo: str = "claude-code", modelo: str | None = None,

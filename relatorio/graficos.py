@@ -523,3 +523,160 @@ def mapa_posicionamento(concorrentes: list[dict], empresa: tuple[str, int, int] 
         dy = -9 - 9 * (len(rot) - 1) if es <= 1 else (14 if eh else 12)  # na borda de baixo, rótulo acima do ponto
         c.append(_tspans(px, py + dy, rot, 8.2 if eh else 7.2, TINTA, peso=700 if eh else 400))
     return _svg(L, A, "".join(c), "Mapa de posicionamento competitivo")
+
+
+# --------------------------------------------------------------------------- capítulo 4 (análise financeira)
+
+
+def _curto(v: float) -> str:
+    """1,37M · 703k · 950 (rótulo de coluna)."""
+    return brl_compacto(v).replace("R$ ", "").replace(" mil", "k").replace(" mi", "M")
+
+
+def colunas_serie(itens: list[tuple[str, float, str]], destaques: set[int] | None = None, altura: int = 128,
+                  rotulo_valor: bool = True, titulo: str = "Série por período") -> str:
+    """Colunas de uma série (cinza), destaque em laranja; `itens` = (rótulo do eixo, valor, texto extra no topo)."""
+    destaques = destaques or set()
+    n = max(len(itens), 1)
+    L, esq, dir_, topo, base = 330, 4, 4, 24, altura - 22
+    vals = [v for _, v, _ in itens]
+    vmin, vmax = min(0.0, *vals), max(0.0, *vals) or 1.0
+    y = lambda v: topo + (vmax - v) / ((vmax - vmin) or 1) * (base - topo)  # noqa: E731
+    banda = (L - esq - dir_) / n
+    w = min(26.0, banda * 0.62)
+    fonte = 8 if n <= 8 else 6.4
+    c = [f'<line x1="{esq}" x2="{L - dir_}" y1="{y(0):.1f}" y2="{y(0):.1f}" stroke="{MUTED}" stroke-width="1"/>']
+    for i, (rot, v, extra) in enumerate(itens):
+        cx = esq + banda * (i + 0.5)
+        c.append(_barra_v(cx - w / 2, y(0), y(v), w, LARANJA if i in destaques else CINZA))
+        if rotulo_valor:
+            ty = y(v) - 4 if v >= 0 else y(v) + 10
+            c.append(f'<text x="{cx:.1f}" y="{ty:.1f}" font-size="{fonte}" fill="{TINTA_SUAVE}" text-anchor="middle">'
+                     f'{escape(_curto(v))}</text>')
+        if extra:
+            c.append(f'<text x="{cx:.1f}" y="{topo - 14}" font-size="{fonte}" fill="{MUTED}" text-anchor="middle">'
+                     f'{escape(extra)}</text>')
+        c.append(f'<text x="{cx:.1f}" y="{altura - 8}" font-size="{fonte + 0.5}" fill="{TINTA}" text-anchor="middle">'
+                 f'{escape(rot)}</text>')
+    return _svg(L, altura, "".join(c), titulo)
+
+
+def empilhadas_100(anos: list[str], segmentos: dict[str, list[float]]) -> str:
+    """Cada ano = 100% da receita bruta, empilhado de baixo para cima; o último segmento (EBITDA) em laranja,
+    os demais em tons de cinza. Percentual dentro do segmento quando cabe; legenda à direita."""
+    L, A, esq, topo, base = 330, 150, 4, 8, 128
+    nomes = list(segmentos)
+    tons = ["#E3E3E3", "#BFBFBF", "#9A9A9A", "#6B6B6B"]
+    cores = {n: (LARANJA if i == len(nomes) - 1 else tons[i % len(tons)]) for i, n in enumerate(nomes)}
+    larg_graf = 200
+    banda = larg_graf / max(len(anos), 1)
+    w = min(34.0, banda * 0.6)
+    teto = max(100.0, *(sum(max(segmentos[n][i], 0.0) for n in nomes) for i in range(len(anos))))
+    y = lambda p: base - p / teto * (base - topo)  # noqa: E731
+    c = []
+    if teto > 100.5:  # custos acima da receita: linha de 100% marca onde a receita acaba
+        c.append(f'<line x1="{esq}" x2="{esq + larg_graf}" y1="{y(100):.1f}" y2="{y(100):.1f}" stroke="{TINTA}" '
+                 f'stroke-width="0.8" stroke-dasharray="3 2"/><text x="{esq + larg_graf}" y="{y(100) - 2:.1f}" '
+                 f'font-size="6.8" fill="{MUTED}" text-anchor="end">100% da receita</text>')
+    for i, ano in enumerate(anos):
+        cx = esq + banda * (i + 0.5)
+        acum = 0.0
+        for n in nomes:
+            p = max(segmentos[n][i], 0.0)
+            if p <= 0:
+                continue
+            y1, y0 = y(acum + p), y(acum)
+            c.append(f'<rect x="{cx - w / 2:.1f}" y="{y1:.1f}" width="{w:.1f}" height="{y0 - y1:.1f}" fill="{cores[n]}" '
+                     f'stroke="{PAPEL}" stroke-width="0.8"/>')
+            if y0 - y1 >= 9:
+                cor_txt = PAPEL if cores[n] == "#6B6B6B" else TINTA
+                peso = 700 if n == nomes[-1] else 400
+                c.append(f'<text x="{cx:.1f}" y="{(y0 + y1) / 2 + 3:.1f}" font-size="7.2" fill="{cor_txt}" '
+                         f'text-anchor="middle" font-weight="{peso}">{p:.0f}%</text>')
+            acum += p
+        ult = segmentos[nomes[-1]][i]
+        if ult < 0:  # EBITDA negativo: não empilha, vai escrito acima da barra
+            c.append(f'<text x="{cx:.1f}" y="{y(acum) - 3:.1f}" font-size="7.2" font-weight="700" fill="{TINTA}" '
+                     f'text-anchor="middle">{escape(nomes[-1])} {ult:.0f}%</text>')
+        c.append(f'<text x="{cx:.1f}" y="{A - 8}" font-size="8.5" fill="{TINTA}" text-anchor="middle">{escape(ano)}</text>')
+    lx = esq + larg_graf + 14
+    for j, n in enumerate(reversed(nomes)):
+        yy = topo + 8 + j * 16
+        c.append(f'<rect x="{lx}" y="{yy - 7}" width="8" height="8" rx="1.5" fill="{cores[n]}"/>'
+                 f'<text x="{lx + 12}" y="{yy}" font-size="8" fill="{TINTA}">{escape(n)}</text>')
+    return _svg(L, A, "".join(c), "Composição da receita bruta: tributos, custos, despesas e EBITDA")
+
+
+def cascata_ponte(itens: list[tuple[str, float]]) -> str:
+    """Ponte vertical do EBITDA contábil ao econômico: totais em grafite (o final em laranja), acréscimos em cinza
+    claro, reduções em cinza escuro; conectores finos entre as barras e valor sobre cada uma."""
+    n = len(itens)
+    L, A, esq, dir_, topo, base = 660, 150, 10, 10, 20, 108
+    acum, barras = 0.0, []
+    for i, (rot, v) in enumerate(itens):
+        total = i == 0 or rot.startswith("=")
+        ini, fim = (0.0, v) if total else (acum, acum + v)
+        acum = v if total else acum + v
+        barras.append((rot.lstrip("= "), ini, fim, total, v, i == n - 1))
+    vals = [b for _, a, f, *_ in barras for b in (a, f)]
+    vmin, vmax = min(0.0, *vals), max(vals) * 1.08
+    y = lambda v: topo + (vmax - v) / ((vmax - vmin) or 1) * (base - topo)  # noqa: E731
+    banda = (L - esq - dir_) / n
+    w = min(46.0, banda * 0.58)
+    c = [f'<line x1="{esq}" x2="{L - dir_}" y1="{y(0):.1f}" y2="{y(0):.1f}" stroke="{MUTED}" stroke-width="1"/>']
+    for i, (rot, ini, fim, total, v, ultimo) in enumerate(barras):
+        cx = esq + banda * (i + 0.5)
+        cor = LARANJA if ultimo else (TINTA_SUAVE if total else (CINZA if v >= 0 else NEUTRO))
+        y0, y1 = sorted((y(ini), y(fim)))
+        c.append(f'<rect x="{cx - w / 2:.1f}" y="{y0:.1f}" width="{w:.1f}" height="{max(y1 - y0, 1.2):.1f}" rx="2" '
+                 f'fill="{cor}"/>')
+        if i < n - 1:
+            nx = esq + banda * (i + 1.5) - w / 2
+            c.append(f'<line x1="{cx + w / 2:.1f}" x2="{nx:.1f}" y1="{y(fim):.1f}" y2="{y(fim):.1f}" stroke="{MUTED}" '
+                     f'stroke-width="0.8" stroke-dasharray="2 2"/>')
+        txt = _curto(v) if total else ("+" if v >= 0 else "") + _curto(v)
+        c.append(f'<text x="{cx:.1f}" y="{y0 - 4:.1f}" font-size="9" fill="{TINTA}" text-anchor="middle" '
+                 f'font-weight="{700 if total else 400}">{escape(txt)}</text>')
+        c.append(_tspans(cx, base + 14, _cortar(rot, 16, 3), 8.2, TINTA, peso=700 if total else 400))
+    return _svg(L, A, "".join(c), "Ponte do EBITDA contábil ao EBITDA econômico")
+
+
+def radar_verticais(notas: list[tuple[str, float | None]]) -> str:
+    """Teia das verticais de risco (nota 1–5, 5 = mais sólido). Sem nota = vértice vazio marcado 'n/d'."""
+    import math
+
+    L, A, cx, cy, R = 330, 210, 165, 106, 72
+    n = len(notas)
+    ang = lambda i: -math.pi / 2 + 2 * math.pi * i / n  # noqa: E731
+    pt = lambda i, v: (cx + R * v / 5 * math.cos(ang(i)), cy + R * v / 5 * math.sin(ang(i)))  # noqa: E731
+    c = []
+    for nivel in range(1, 6):
+        pts = " ".join(f"{pt(i, nivel)[0]:.1f},{pt(i, nivel)[1]:.1f}" for i in range(n))
+        c.append(f'<polygon points="{pts}" fill="none" stroke="{LINHA}" stroke-width="1"/>')
+    for i, (nome, v) in enumerate(notas):
+        x2, y2 = pt(i, 5)
+        c.append(f'<line x1="{cx}" y1="{cy}" x2="{x2:.1f}" y2="{y2:.1f}" stroke="{LINHA}" stroke-width="1"/>')
+        lx, ly = pt(i, 5.75)
+        ancora = "middle" if abs(lx - cx) < 12 else ("start" if lx > cx else "end")
+        linhas = _quebrar(nome, 17)
+        if abs(ly - cy) < 40:
+            y0 = ly + 3 - (len(linhas) - 1) * 4.5
+        elif ly < cy:
+            y0 = ly - (len(linhas) - 1) * 9 + 3
+        else:
+            y0 = ly + 6
+        c.append(_tspans(lx, y0, linhas, 7.6, TINTA_SUAVE, ancora=ancora))
+    validos = [(i, v) for i, (_, v) in enumerate(notas) if v is not None]
+    pts = " ".join(f"{pt(i, v)[0]:.1f},{pt(i, v)[1]:.1f}" for i, v in validos)
+    c.append(f'<polygon points="{pts}" fill="{LARANJA}" fill-opacity="0.18" stroke="{LARANJA}" stroke-width="2"/>')
+    for i, (_, v) in enumerate(notas):
+        if v is None:
+            x, yy = pt(i, 0.9)
+            c.append(f'<text x="{x:.1f}" y="{yy + 3:.1f}" font-size="7.5" fill="{MUTED}" text-anchor="middle">n/d</text>')
+            continue
+        x, yy = pt(i, v)
+        txt = f"{v:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+        c.append(f'<circle cx="{x:.1f}" cy="{yy:.1f}" r="3.5" fill="{LARANJA}" stroke="{PAPEL}" stroke-width="1.5"/>'
+                 f'<text x="{x:.1f}" y="{yy - 6:.1f}" font-size="8" font-weight="700" fill="{TINTA}" '
+                 f'text-anchor="middle">{txt}</text>')
+    return _svg(L, A, "".join(c), "Mapa de risco por vertical (5 = mais sólido)")

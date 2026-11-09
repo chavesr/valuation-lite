@@ -17,6 +17,8 @@ _P = {
     "local": "M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
     "calendario": "M4 6h16v14H4zM4 10h16M8 3v4M16 3v4",
     "documento": "M7 3h7l5 5v13H7zM14 3v5h5",
+    "etiqueta": "M3 12V4h8l10 10-8 8L3 12zM7.5 8h.01",
+    "cartao": "M3 5h18v14H3zM7 10h4M7 14h6M15 10h2",
 }
 
 

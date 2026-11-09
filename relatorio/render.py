@@ -78,6 +78,20 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .ficha { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2mm 5mm; background: var(--cinza-quadro);
          padding: 2.5mm 3mm; margin-bottom: 3mm; border-radius: 3mm; }
 .ficha b { display: block; font-size: 6.8pt; color: var(--gray); font-weight: 400; }
+.perfil { display: grid; grid-template-columns: 1fr 1fr; gap: 0 6mm; background: var(--cinza-quadro);
+          border-radius: 3mm; padding: 2.2mm 3.4mm; margin-bottom: 3.4mm; }
+.perfil .lin { display: grid; grid-template-columns: 23mm 1fr; align-items: baseline; padding: .9mm 0; }
+.perfil .rot { display: flex; align-items: center; gap: 1.4mm; font-size: 8pt; color: var(--gray); }
+.perfil .rot svg { position: relative; top: .3mm; }
+.perfil .val { font-size: 8pt; color: var(--ink); line-height: 1.3; }
+.perfil .val small { font-size: 6.8pt; color: var(--gray2); }
+.bloco-junto { break-inside: avoid; }
+.kpis4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6mm; margin-bottom: 2mm; }
+.nota.nd { color: var(--gray); font-style: italic; }
+table.dre tr.sub td { font-weight: 700; }
+table.dre tr.margem td { color: var(--gray); font-style: italic; }
+table.compacta td, table.compacta th { padding: .55mm 1.8mm; line-height: 1.25; }
+small { font-size: 6.8pt; color: var(--gray2); }
 .aviso { background: var(--cinza-quadro); padding: 2mm 3mm; margin: 2mm 0; border-radius: 3mm; }
 .disclaimer { font-size: 6.8pt; color: var(--gray2); margin-top: 6mm; border-top: 1px solid var(--line); padding-top: 2mm; }
 table.riscos td:nth-child(1) { width: 62%; } table.riscos td:nth-child(2) { width: 9%; }
@@ -180,21 +194,33 @@ def cap1_visao_geral(c: dict) -> str:
         '</div>'])
 
 
+def _cnpj(cnpj: str) -> str:
+    d = "".join(ch for ch in cnpj or "" if ch.isdigit())
+    return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}" if len(d) == 14 else (cnpj or "—")
+
+
 def cap2_empresa(c: dict) -> str:
     t, q = c["textos"], c.get("qual") or {}
     perfil = q.get("perfil") or {}
     fund = perfil.get("fundacao") or min((e["ano"] for e in q.get("linha_do_tempo") or []), default=None)
     anos = c["ano"] - fund if fund else None
-    cartoes = [("local", "Sede", perfil.get("cidade_uf") or "—", ""),
-               ("calendario", "Fundação", str(fund) if fund else "—", f"{anos} anos de mercado" if anos else ""),
-               ("pessoas", "Funcionários", str(perfil.get("funcionarios") or "—"), "declarado" if perfil.get("funcionarios") else ""),
-               ("documento", "CNPJs no grupo", str(c.get("cnpjs") or "—"), c.get("regime") or ""),
-               ("empresa", "Setor", c.get("setor") or "—", (perfil.get("setor") or "")[:60])]
-    cards = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
-                    f'<div class="val pequeno">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
-                    for ic, rot, val, obs in cartoes)
+    grupo = c.get("empresas_grupo") or []
+    razao, cnpj = grupo[0] if grupo else (c.get("empresa") or "—", "")
+    extra_cnpj = f"+{len(grupo) - 1} no grupo" if len(grupo) > 1 else ""
+    func = perfil.get("funcionarios")
+    esquerda = [("cartao", "Razão social", razao, ""),
+                ("documento", "CNPJ", _cnpj(cnpj), extra_cnpj),
+                ("local", "Sede", perfil.get("cidade_uf") or "—", "")]
+    direita = [("etiqueta", "Setor", (perfil.get("setor") or c.get("setor") or "—")[:70], ""),
+               ("pessoas", "Funcionários", str(func) if func else "—", "declarado" if func else ""),
+               ("calendario", "Fundação", str(fund) if fund else "—", f"{anos} anos de mercado" if anos else "")]
+    coluna = lambda itens: "<div>" + "".join(  # noqa: E731
+        f'<div class="lin"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
+        f'<div class="val">{escape(val)}{f" <small>· {escape(obs)}</small>" if obs else ""}</div></div>'
+        for ic, rot, val, obs in itens) + "</div>"
+    cards = coluna(esquerda) + coluna(direita)
     h = ['<section class="capitulo">' + _cab(2, "Sobre a empresa", c),
-         f'<div class="kpis">{cards}</div>',
+         f'<div class="perfil">{cards}</div>',
          _quadro("O negócio", "empresa", _p(t["sobre_empresa"]), "destaque")]
     eventos = [(e["ano"], e["evento"]) for e in q.get("linha_do_tempo") or []]
     if eventos:
@@ -275,22 +301,201 @@ def cap3_mercado(c: dict) -> str:
     return "".join(h)
 
 
+ND = "n/d"
+
+
+def _nd_nota(o_que: str) -> str:
+    return f'<div class="nota nd">Não informado. Pedir ao vendedor: {escape(o_que)}</div>'
+
+
+def _mil(v: float | None) -> str:
+    """R$ mil sem casas, negativo entre parênteses; n/d quando falta."""
+    if v is None:
+        return ND
+    s = f"{abs(v) / 1000:,.0f}".replace(",", ".")
+    return f"({s})" if v < 0 else s
+
+
+def _dias(v: float | None) -> str:
+    return ND if v is None else f"{v:.0f}"
+
+
+def _vezes(v: float | None) -> str:
+    return ND if v is None else f"{v:.1f}x".replace(".", ",")
+
+
+def _pct1(v: float | None) -> str:
+    return ND if v is None else f"{v:.1f}%".replace(".", ",")
+
+
+def _mes(comp: str) -> str:
+    meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+    a, m = comp.split("-")
+    return f"{meses[int(m) - 1]}/{a[2:]}"
+
+
+def _bloco_clientes(cl: dict | None, ano_base: str) -> str:
+    if not cl or not cl.get("ranking"):
+        return _nd_nota("os 20 maiores clientes dos últimos 3 anos, com faturamento no ano e setor de atuação "
+                        "(aba 5_Clientes da planilha da ND) ou a curva ABC das notas fiscais.")
+    linhas = "".join(f"<tr><td>{i}</td><td>{escape(r['cliente'])}</td><td class='n'>{_mil(r['valor'])}</td>"
+                     f"<td class='n'>{_pct1(r['participacao'] * 100)}</td><td>{escape(r.get('setor') or ND)}</td></tr>"
+                     for i, r in enumerate(cl["ranking"][:10], 1))
+    cards = [("Clientes empresa", str(cl.get("clientes_pj") or ND), "no período"),
+             ("Maior cliente", _pct1(cl["maior"] * 100), "da receita"),
+             ("5 maiores", _pct1(cl["top5"] * 100), "da receita"),
+             ("10 maiores", _pct1(cl["top10"] * 100), "da receita")]
+    cards_html = "".join(f'<div class="kpi mini"><div class="rot">{escape(r)}</div><div class="val">{escape(x)}</div>'
+                         f'<div class="obs">{escape(o)}</div></div>' for r, x, o in cards)
+    return (f'<div class="kpis4">{cards_html}</div><table><tr><th>#</th><th>Cliente</th><th class="n">Receita (R$ mil)</th>'
+            f'<th class="n">Part.</th><th>Setor</th></tr>{linhas}</table>'
+            '<div class="nota">Fonte: notas fiscais (SPED). Vendas a pessoa física ficam fora do ranking.</div>')
+
+
 def cap4_financeiro(c: dict) -> str:
-    t, v, dre = c["textos"], c["valuation"], c["dre"]
-    cab = "".join(f"<th class='n'>{escape(p)}</th>" for p in dre["periodos"])
-    linhas = "".join(f"<tr class='{'total' if total else ''}'><td>{escape(conta)}</td>"
-                     + "".join(f"<td class='n'>{escape(x)}</td>" for x in vals) + "</tr>"
-                     for conta, vals, total in dre["linhas"])
+    t, v, f = c["textos"], c["valuation"], c["financeiro"]
+    q = c.get("qual") or {}
+    h = ['<section class="capitulo">', _cab(4, "Análise financeira e riscos do negócio", c),
+         _quadro("Leitura financeira", "receita", _p(t["leitura_financeira"]), "destaque")]
+
+    # análise operacional (x · y = receita) e base de clientes
+    op = q.get("operacional") or {}
+    if op.get("indicadores"):
+        h.append(_secao("Análise operacional", "ebitda", g.operacional(op)))  # fase 2 (F5/planilha)
+    else:
+        h.append(_secao("Análise operacional", "ebitda", _nd_nota(
+            "os dois indicadores que explicam a receita, ano a ano (ex.: volume vendido e preço médio; "
+            "clientes ativos e ticket médio).")))
+    h.append(_secao("Base de clientes", "pessoas", _bloco_clientes(f.get("clientes"), v["periodo_base"])))
+
+    # receita: anual + sazonalidade + linhas
+    ra = f["receita_anual"]
+    if ra:
+        itens = [(a, rb, "" if cr is None else f"{'+' if cr >= 0 else ''}{cr:.0f}%") for a, rb, cr in ra]
+        bloco_ano = ('<div class="legenda-graf">Receita bruta por ano (R$) e crescimento</div>'
+                     + g.colunas_serie(itens, {len(itens) - 1}, titulo="Receita bruta por ano"))
+        if len(ra) >= 3 and ra[0][1]:
+            cagr = ((ra[-1][1] / ra[0][1]) ** (1 / (len(ra) - 1)) - 1) * 100
+            bloco_ano += f'<div class="nota">Crescimento médio de {_pct1(cagr)} a.a. entre {ra[0][0]} e {ra[-1][0]}.'
+        else:
+            bloco_ano += '<div class="nota">'
+        if f.get("parcial"):
+            bloco_ano += f' {escape(f["parcial"]["rotulo"])}: {escape(g.brl_compacto(f["parcial"]["rb"]))} até agora.'
+        bloco_ano += ' Fonte: DRE contábil.</div>'
+    else:
+        bloco_ano = _nd_nota("as DREs anuais dos últimos 3 anos.")
+    m = f.get("mensal")
+    if m:
+        top = sorted(range(len(m["valores"])), key=lambda i: -m["valores"][i])[:3]
+        itens = [(_mes(k).split("/")[0][:1].upper() if len(m["meses"]) > 12 else _mes(k), val, "")
+                 for k, val in zip(m["meses"], m["valores"])]
+        bloco_mes = ('<div class="legenda-graf">Faturamento mensal (R$) · em laranja, os 3 maiores meses</div>'
+                     + g.colunas_serie(itens, set(top), rotulo_valor=len(itens) <= 12, titulo="Faturamento mensal")
+                     + f'<div class="nota">{_mes(m["meses"][0])} a {_mes(m["meses"][-1])} · fonte: {escape(m["fonte"] or ND)}.</div>')
+    else:
+        bloco_mes = _nd_nota("o faturamento mês a mês dos últimos 24 meses (PGDAS-D ou aba 4_Faturamento).")
+    linhas_rec = q.get("linhas_receita") or []
+    mix = q.get("mix_receita") or []
+    if linhas_rec:
+        bloco_linhas = g.linhas_receita(linhas_rec)  # fase 2
+    elif mix:
+        bloco_linhas = ('<div class="legenda-graf">Participação na receita (declarada, último ano)</div>'
+                        + g.barras_percentual([(x["item"], x["percentual"]) for x in mix]))
+    else:
+        bloco_linhas = _nd_nota("a receita de cada linha de produto ou serviço nos últimos 3 anos.")
+    h += ['<div class="duas">', _secao("Análise de receita", "receita", bloco_ano),
+          _secao("Sazonalidade", "calendario", bloco_mes), '</div>',
+          _secao("Linhas de receita", "faixa", bloco_linhas)]
+
+    # custos
+    cu, dre = f.get("custos"), f["dre"]
+    if cu:
+        idx = [dre["colunas"].index(a) for a in cu["anos"]]
+        margens = [(nome, [vals[i] for i in idx]) for nome, vals in dre["margens"]]
+        series = [(nome.replace('Margem ', '').capitalize().replace('Ebitda', 'EBITDA'), vals, cor)
+                  for (nome, vals), cor in zip(margens, (g.CINZA, g.LARANJA, g.TINTA))
+                  if all(x is not None for x in vals)]
+        h += ['<div class="duas">',
+              _secao("Análise de custos", "divida",
+                     '<div class="legenda-graf">Para onde vai cada R$ 100 de receita bruta</div>'
+                     + g.empilhadas_100(cu["anos"], cu["segmentos"])),
+              _secao("Margens", "ebitda", '<div class="legenda-graf">Margens sobre a receita bruta (%)</div>'
+                     + g.linhas_rentabilidade(cu["anos"], series)), '</div>']
+    else:
+        h.append(_secao("Análise de custos", "divida", _nd_nota("a DRE com custo das vendas e despesas abertas.")))
+
+    # DRE simplificado
+    if dre["colunas"]:
+        cab = "".join(f"<th class='n'>{escape(p)}</th>" for p in dre["colunas"])
+        corpo = "".join(f"<tr class='{cls}'><td>{escape(rot)}</td>" + "".join(f"<td class='n'>{_mil(x)}</td>" for x in vals)
+                        + "</tr>" for rot, vals, cls in dre["linhas"])
+        corpo += "".join(f"<tr class='margem'><td>{escape(rot)}</td>" + "".join(f"<td class='n'>{_pct1(x)}</td>" for x in vals)
+                         + "</tr>" for rot, vals in dre["margens"])
+        nota = ("Valores da DRE contábil, como reportados (R$ mil; negativos entre parênteses). "
+                + ("" if dre["detalhada"] else "A empresa não abre custos e despesas: mostramos receita, lucro "
+                   "operacional e lucro líquido. ") + "n/d = não disponível.")
+        h.append(_secao("DRE simplificado", "valor", f'<table class="dre compacta"><tr><th>R$ mil</th>{cab}</tr>{corpo}</table>'
+                        f'<div class="nota">{nota}</div>'))
+    else:
+        h.append(_secao("DRE simplificado", "valor", _nd_nota("as DREs anuais dos últimos 3 anos.")))
+
+    # ponte contábil → econômico
+    p = f.get("ponte")
+    if p:
+        nota = (f"Período {escape(p['periodo'])}. O EBITDA econômico é o que um comprador teria com a empresa "
+                "rodando sem o dono atual e com os tributos do seu regime.")
+        if p["pendentes"]:
+            nota += (f" {p['pendentes']} ajuste(s) de julgamento ainda em aprovação "
+                     f"({escape(g.brl_compacto(p['pendentes_valor']))}) não entram aqui.")
+        h.append(_secao("Do resultado contábil ao econômico", "faixa", g.cascata_ponte(p["itens"])
+                        + f'<div class="nota">{nota}</div>'))
+
+    # capital de giro e dívida
+    gd = f.get("giro") or []
+    if gd:
+        anos = "".join(f"<th class='n'>{x['ano']}</th>" for x in gd)
+        lin = [("Prazo de recebimento (dias)", [_dias(x["pmr"]) for x in gd]),
+               ("Prazo de estoque (dias)", [_dias(x["pme"]) + ("*" if x["estoque_fonte"] == "DEFIS" and x["pme"] else "")
+                                            for x in gd]),
+               ("Prazo de pagamento (dias)", [_dias(x["pmp"]) for x in gd]),
+               ("Ciclo de caixa (dias)", [_dias(x["ciclo"]) for x in gd]),
+               ("Dívida bruta (R$ mil)", [_mil(x["divida_bruta"]) for x in gd]),
+               ("Caixa (R$ mil)", [_mil(x["caixa"]) for x in gd]),
+               ("Dívida líquida / EBITDA", [_vezes(x["alavancagem"]) for x in gd])]
+        tabela = (f'<table class="compacta"><tr><th></th>{anos}</tr>'
+                  + "".join(f"<tr class='{'total' if 'Ciclo' in r else ''}'><td>{escape(r)}</td>"
+                            + "".join(f"<td class='n'>{escape(x)}</td>" for x in vals) + "</tr>" for r, vals in lin)
+                  + '</table>')
+        obs = "Prazos sobre receita bruta e custo das vendas do ano; ciclo = recebimento + estoque − pagamento."
+        if any(x["estoque_fonte"] == "DEFIS" for x in gd):
+            obs += " *Estoque da DEFIS (o balanço não traz)."
+        itens = [(str(x["ano"]), x["divida_liquida"], "" if x["alavancagem"] is None else _vezes(x["alavancagem"]) + " EBITDA")
+                 for x in gd if x["divida_liquida"] is not None]
+        graf = ('<div class="legenda-graf">Dívida líquida (R$) e múltiplo do EBITDA</div>'
+                + g.colunas_serie(itens, {len(itens) - 1}, titulo="Dívida líquida por ano")) if itens else ""
+        h += ['<div class="duas">', _secao("Capital de giro e dívida", "divida", tabela + f'<div class="nota">{obs}</div>'),
+              _secao("Endividamento", "alerta", graf or _nd_nota("os contratos de empréstimo e saldos devedores.")),
+              '</div>']
+    else:
+        h.append(_secao("Capital de giro e dívida", "divida", _nd_nota("os balanços dos últimos 3 anos.")))
+
+    # mapa de riscos (8 verticais)
+    vt = f["verticais"]
+    tab_v = ('<table class="verticais compacta"><tr><th>Vertical</th><th class="n">Nota</th></tr>'
+             + "".join(f"<tr><td>{escape(x['vertical'])}{' <small>(proposta)</small>' if x['pendente'] else ''}</td>"
+                       f"<td class='n'><b>{ND if x['nota'] is None else str(x['nota']).replace('.0', '').replace('.', ',')}</b></td></tr>"
+                       for x in vt) + '</table>')
     riscos = "".join(f"<tr><td>{escape(r['descricao'])}</td><td>{escape(r['severidade'])}</td>"
                      f"<td>{escape(r['tratamento'])}</td></tr>" for r in c["riscos"])
-    return "".join(['<section class="capitulo">', _cab(4, "Análise financeira e riscos do negócio", c),
-                    _p(t["leitura_financeira"]), f'<div>{g.receita_ebitda(c["grafico_dre"])}</div>',
-                    f'<table><tr><th>DRE econômica (R$)</th>{cab}</tr>{linhas}</table>',
-                    '<h3 class="sec">Riscos e contingências</h3>', _p(t["leitura_riscos"]),
-                    f'<table class="riscos"><tr><th>Risco</th><th>Peso</th><th>Tratamento no valor</th></tr>{riscos}</table>',
-                    '<h3 class="sec">Score de risco</h3>', f'<div>{g.notas_score(c["notas"])}</div>',
-                    f'<div class="nota">Escala da ND: 5 = melhor. Score {v["risco"]["score"]:.0f}/100 (0 = menor risco).</div>',
-                    '</section>'])
+    h += ['<div class="bloco-junto">', _quadro("Mapa de riscos", "alerta", _p(t["leitura_riscos"]), "destaque"),
+          '<div class="duas">', _secao("Risco por vertical", "alerta", g.radar_verticais([(x["vertical"], x["nota"]) for x in vt])),
+          _secao("Notas (5 = mais sólido)", "valor", tab_v
+                 + f'<div class="nota">Score de risco {v["risco"]["score"]:.0f}/100 (0 = menor risco), que define a '
+                   'taxa de desconto. "Proposta" = nota ainda não confirmada pelo analista.</div>'), '</div></div>',
+          _secao("Principais riscos e tratamento", "positivo",
+                 f'<table class="riscos"><tr><th>Risco</th><th>Peso</th><th>Tratamento no valor</th></tr>{riscos}</table>'),
+          '</section>']
+    return "".join(h)
 
 
 def cap5_valuation(c: dict) -> str:
