@@ -260,7 +260,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                                or calc_fin.clientes_f5(qual, dre_c, dados)),
                   "linhas_receita": calc_fin.linhas_receita_planilha(dados) or calc_fin.linhas_receita_f5(qual),
                   "operacional": calc_fin.operacional_planilha(dados) or calc_fin.operacional_f5(qual),
-                  "leituras": calc_fin.leituras_verticais(qual)}
+                  "leituras": calc_fin.leituras_verticais(qual),
+                  "projecao": calc_fin.projecao_dre(dres, v, hoje.year)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
             "qual": qual, "ano": hoje.year, "focus_selic": focus_selic, "focus_ipca": focus_ipca,

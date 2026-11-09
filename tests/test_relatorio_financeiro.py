@@ -139,3 +139,27 @@ def test_esquema_f5_aceita_saida_antiga_e_recusa_vertical_repetida():
     dup = [{"vertical": "Contingências", "leitura": "a", "tratamento": "b"}] * 2
     with pytest.raises(ValueError):
         Qualitativo.model_validate(base | {"leitura_verticais": dup})
+
+
+def test_projecao_dre_fecha_com_o_motor():
+    from relatorio.financeiro import projecao_dre
+    linhas = [("Receita bruta", 1000.0e3), ("Tributos sobre a receita", -100e3), ("Custo das vendas", -500e3),
+              ("Despesas com pessoal", -100e3), ("Despesas administrativas e comerciais", -50e3)]
+    d = {"periodo": "2025", "linhas": [{"conta": k, "valor": v} for k, v in linhas],
+         "ajustes": [{"valor": -50e3, "status": "aplicado"}, {"valor": -99e3, "status": "proposto"}],
+         "ebitda": 200e3, "capex_manutencao": 20e3, "owner_earnings": 180e3}
+    taxa, g, fluxo = 0.25, 0.05, 150e3
+    fluxos = [fluxo * (1 + g) ** t for t in (1, 2, 3)]
+    vt = 2.5 * fluxos[-1]
+    ev = sum(f / (1 + taxa) ** t for t, f in enumerate(fluxos, 1)) + vt / (1 + taxa) ** 3
+    v = {"periodo_base": "2025", "fluxo_base": fluxo,
+         "cenarios": [{"nome": "base", "crescimento": g, "taxa": taxa, "fluxos": fluxos, "valor_terminal": vt,
+                       "valor_empresa": ev}]}
+    pj = projecao_dre([d], v, 2026)
+    assert pj["colunas"] == ["2025 (base)", "2027", "2028", "2029", "Valor ao fim"]
+    assert abs(pj["soma_vp"] - ev) < 0.01
+    rot = {r: vals for r, vals, _ in pj["linhas"]}
+    assert rot["= EBITDA econômico"][0] == 200e3 and abs(rot["= EBITDA econômico"][1] - 210e3) < 0.01
+    assert rot["(±) Ajuste à média dos períodos"][0] == -30e3 and pj["tem_acerto"]
+    assert "(−) Impostos sobre o lucro" not in rot  # oe = ebitda − capex
+    assert projecao_dre([d], {**v, "fluxo_base": -1}, 2026) is None

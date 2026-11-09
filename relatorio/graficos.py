@@ -719,3 +719,48 @@ def linhas_empilhadas(anos: list[str], linhas: list[tuple[str, list[float | None
         c.append(_tspans(lx + 12, yy, _cortar(nome, 24, 1), 8, TINTA, ancora="start"))
         c.append(f'<text x="{lx + 12}" y="{yy + 10}" font-size="7.2" fill="{MUTED}">{escape(part)}</text>')
     return _svg(L, A, "".join(c), "Receita por linha de produto ou serviço")
+
+
+# --------------------------------------------------------------------------- capítulo 5 (valuation)
+
+
+def football_field(faixas: list[tuple[str, float, float, str]], marcadores: list[tuple[str, float, bool]]) -> str:
+    """Faixas de valor por método (rótulo, mínimo, máximo, observação), em cinza; ponto quando mínimo = máximo.
+    Marcadores verticais atravessam o gráfico: o destacado (preço recomendado) em laranja, os demais tracejados."""
+    L, esq, dir_, h, passo, topo = 660, 196, 24, 14, 30, 42
+    A = topo + passo * len(faixas) + 26
+    vals = [v for f in faixas for v in f[1:3]] + [v for _, v, _ in marcadores]
+    vmin, vmax = min(0.0, *vals), max(vals) * 1.06
+    x = lambda v: esq + (v - vmin) / ((vmax - vmin) or 1) * (L - esq - dir_)  # noqa: E731
+    base = topo + passo * len(faixas)
+    c = []
+    for t in _ticks(vmin, vmax, 5):
+        if vmin <= t <= vmax:
+            c.append(f'<line x1="{x(t):.1f}" x2="{x(t):.1f}" y1="{topo - 6}" y2="{base}" stroke="{LINHA}" stroke-width="1"/>'
+                     f'<text x="{x(t):.1f}" y="{base + 13}" font-size="9" fill="{MUTED}" text-anchor="middle">'
+                     f'{escape(_curto(t))}</text>')
+    for i, (rot, a, b, obs, *resto) in enumerate(faixas):
+        ref = bool(resto and resto[0])  # referência: contorno tracejado, sem preenchimento
+        yy = topo + i * passo
+        c.append(f'<text x="{esq - 10}" y="{yy + 10}" font-size="10" fill="{TINTA}" text-anchor="end">{escape(rot)}</text>'
+                 f'<text x="{esq - 10}" y="{yy + 21}" font-size="8" fill="{MUTED}" text-anchor="end">{escape(obs)}</text>')
+        if abs(b - a) < (vmax - vmin) * 0.004:
+            c.append(f'<circle cx="{x(a):.1f}" cy="{yy + h / 2:.1f}" r="5.5" fill="{NEUTRO}"/>'
+                     f'<text x="{x(a) + 9:.1f}" y="{yy + h / 2 + 3.5:.1f}" font-size="9" fill="{TINTA_SUAVE}">'
+                     f'{escape(_curto(a))}</text>')
+            continue
+        estilo = (f'fill="none" stroke="{NEUTRO}" stroke-width="1" stroke-dasharray="3 2"' if ref else f'fill="{CINZA}"')
+        c.append(f'<rect x="{x(a):.1f}" y="{yy}" width="{x(b) - x(a):.1f}" height="{h}" rx="3" {estilo}/>')
+        c.append(f'<text x="{x(a) - 4:.1f}" y="{yy + 10.5}" font-size="8.5" fill="{TINTA_SUAVE}" text-anchor="end">'
+                 f'{escape(_curto(a))}</text><text x="{x(b) + 4:.1f}" y="{yy + 10.5}" font-size="8.5" '
+                 f'fill="{TINTA_SUAVE}">{escape(_curto(b))}</text>')
+    for j, (rot, v, dest) in enumerate(sorted(marcadores, key=lambda m: m[1])):
+        cor = LARANJA if dest else TINTA
+        traco = "" if dest else ' stroke-dasharray="4 3"'
+        c.append(f'<line x1="{x(v):.1f}" x2="{x(v):.1f}" y1="{topo - 12}" y2="{base}" stroke="{cor}" '
+                 f'stroke-width="{2 if dest else 1.2}"{traco}/>')
+        ancora = "end" if x(v) > L - 120 else "start"
+        dx = -4 if ancora == "end" else 4
+        c.append(f'<text x="{x(v) + dx:.1f}" y="{topo - 14 - (j % 2) * 12}" font-size="9.5" font-weight="{700 if dest else 400}" '
+                 f'fill="{TINTA}" text-anchor="{ancora}">{escape(rot)} · {escape(brl_compacto(v))}</text>')
+    return _svg(L, A, "".join(c), "Faixas de valor por método (valor para o sócio)")

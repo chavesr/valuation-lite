@@ -87,6 +87,8 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .perfil .val small { font-size: 6.8pt; color: var(--gray2); }
 .bloco-junto { break-inside: avoid; }
 .formula { background: var(--cinza-quadro); border-radius: 2mm; padding: 1.6mm 3mm; margin: 1mm 0 1.4mm; font-size: 8.4pt; }
+td.base { background: var(--laranja-claro); font-weight: 700; outline: 1.5px solid var(--laranja); }
+td.obs-cel { color: var(--gray); font-size: 7pt; }
 .kpis4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6mm; margin-bottom: 2mm; }
 .nota.nd { color: var(--gray); font-style: italic; }
 table.dre tr.sub td { font-weight: 700; }
@@ -136,6 +138,24 @@ def _quadro(titulo: str, ic: str, corpo: str, classe: str = "") -> str:
     return f'<div class="quadro {classe}"><h3>{icone(ic, cor="#1A1A1A")}{escape(titulo)}</h3>{corpo}</div>'
 
 
+def _evolucao_inv(c: dict) -> dict | None:
+    """Quanto vira o investimento: mesmo desembolso (preço + dívida líquida + prováveis) na empresa, na Selic e no IPCA+."""
+    v = c["valuation"]
+    divida_liq = (v.get("divida_bruta") or 0) - (v.get("caixa") or 0)
+    descontos = divida_liq + sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
+    desembolso = v["preco_recomendado"] + descontos
+    base_c = next((x for x in v["cenarios"] if x["nome"] == "base"), None)
+    if not (base_c and base_c["fluxos"] and desembolso > 0 and v["fluxo_base"] > 0):
+        return None
+    ev = evolucao(desembolso, base_c["fluxos"], base_c["valor_terminal"], v["risco"]["taxa_desconto"], c["ano"],
+                  c.get("focus_selic") or {}, c.get("focus_ipca") or {}, c.get("juro_real", 0.06))
+    n = len(ev["anos"]) - 1
+    ev["ret_selic"] = (ev["selic"][-1] / ev["selic"][0]) ** (1 / n) - 1
+    ev["ret_ipca"] = (ev["ipca_mais"][-1] / ev["ipca_mais"][0]) ** (1 / n) - 1
+    ev["desembolso"] = desembolso
+    return ev
+
+
 def cap1_visao_geral(c: dict) -> str:
     t, v = c["textos"], c["valuation"]
     cen = {x["nome"]: x for x in v["cenarios"]}
@@ -159,24 +179,18 @@ def cap1_visao_geral(c: dict) -> str:
                ("Potencial máximo", fv["maximo"], "cenário otimista · estratégico", False)]
     if c.get("pedido_vendedor"):
         valores.append(("Expectativa do dono", c["pedido_vendedor"], "pedido informado", False))
-    # quanto vira o investimento: mesmo desembolso (preço + dívida + prováveis) na empresa, na Selic e no IPCA+
-    descontos = divida_liq + sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
-    desembolso = v["preco_recomendado"] + descontos
-    base_c = next((x for x in v["cenarios"] if x["nome"] == "base"), None)
-    ev = None
-    if base_c and base_c["fluxos"] and desembolso > 0 and v["fluxo_base"] > 0:
-        ev = evolucao(desembolso, base_c["fluxos"], base_c["valor_terminal"], v["risco"]["taxa_desconto"], c["ano"],
-                      c.get("focus_selic") or {}, c.get("focus_ipca") or {}, c.get("juro_real", 0.06))
+    ev = _evolucao_inv(c)
     if ev:
-        series = [("empresa", ev["empresa"], g.LARANJA), ("Selic", ev["selic"], g.TINTA),
-                  ("IPCA+", ev["ipca_mais"], "#9A9A9A")]
-        selic_media = (ev["selic"][-1] / ev["selic"][0]) ** (1 / (len(ev["anos"]) - 1)) - 1
-        nota_ev = (f'Desembolso do comprador: {g.brl_compacto(desembolso)} (preço recomendado + dívida assumida). '
-                   f'Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF. '
-                   + (f'<b>TIR do negócio: {pct(ev["tir"])} a.a.</b> contra Selic de {pct(selic_media)} a.a. — a diferença '
-                      'é o prêmio pelo risco: a renda fixa é garantida, o caixa da empresa não. ' if ev["tir"] is not None else '')
-                   + f'IPCA+ com juro real de {pct(c.get("juro_real", 0.06))} a.a.; Selic e IPCA esperados pela Focus/BCB.')
-        bloco_ev = g.linhas_evolucao(ev["anos"], series) + f'<div class="nota">{nota_ev}</div>'
+        bloco_ev = ('<table class="compacta"><tr><th>Mesmo desembolso em</th>'
+                    f'<th class="n">Vira em {ev["anos"][-1]}</th><th class="n">Retorno a.a.</th></tr>'
+                    + "".join(f'<tr class="{"total" if dest else ""}"><td>{rot}</td><td class="n">{g.brl_compacto(serie[-1])}</td>'
+                              f'<td class="n">{pct(ret) if ret is not None else ND}</td></tr>'
+                              for rot, serie, ret, dest in (("A empresa", ev["empresa"], ev["tir"], True),
+                                                            ("Selic", ev["selic"], ev["ret_selic"], False),
+                                                            ("IPCA+", ev["ipca_mais"], ev["ret_ipca"], False)))
+                    + f'</table><div class="nota">Desembolso do comprador: {g.brl_compacto(ev["desembolso"])} (preço '
+                    'recomendado + dívida assumida). A diferença para a renda fixa é o prêmio pelo risco. Ano a ano no '
+                    'capítulo 5.</div>')
     else:
         bloco_ev = '<div class="nota">Sem caixa positivo projetado: comparação com a renda fixa não se aplica.</div>'
     notas_radar = [(nome.split(" e ")[0].replace("Confiabilidade da informação", "Informação")
@@ -553,31 +567,185 @@ def cap4_financeiro(c: dict) -> str:
     return "".join(h)
 
 
+def _pp(v: float) -> str:
+    return f"{v * 100:.1f} p.p.".replace(".", ",", 1)
+
+
 def cap5_valuation(c: dict) -> str:
     t, v = c["textos"], c["valuation"]
     r = v["risco"]
-    cen = "".join(f"<tr><td>{x['nome'].capitalize()}</td><td class='n'>{pct(x['taxa'])}</td>"
-                  f"<td class='n'>{pct(x['crescimento'])}</td><td class='n'>{brl(x['valor_empresa'])}</td>"
-                  f"<td class='n'>{brl(x['valor_patrimonio'])}</td></tr>" for x in v["cenarios"])
-    regua = "".join(f"<tr><td>{escape(nome)}</td><td class='n'>{str(x['anos']).replace('.', ',')}</td>"
-                    f"<td class='n'>{brl(x['valor_patrimonio'])}</td></tr>"
-                    for nome, x in (("Venda forçada", v["regua_payback"].get("forcada")),
-                                    ("Mercado", v["regua_payback"].get("mercado")),
-                                    ("Máximo (régua da casa)", v["regua_payback"].get("maximo"))) if x)
-    h = ['<section class="capitulo">', _cab(5, "Valuation", c), _p(t["leitura_valuation"]),
-         f'<div class="aviso">Taxa de desconto <b>{pct(r["taxa_desconto"])}</b> ao ano = Selic de referência '
-         f'{pct(r["selic"], 2)} ({escape(c["selic_fonte"])}) + prêmio de risco {pct(r["premio_implicito"])} pelo Score. '
-         f'Horizonte de {r["horizonte_anos"]} anos, sem perpetuidade. Caixa sustentável: <b>{brl(v["fluxo_base"])}</b>/ano.</div>',
-         '<table><tr><th>Cenário</th><th class="n">Taxa</th><th class="n">Crescimento</th>'
-         f'<th class="n">Valor da empresa</th><th class="n">Valor para o sócio</th></tr>{cen}</table>']
-    if regua:
-        h += ['<h3 class="sec">Conferência pela régua da casa</h3>',
-              f'<table><tr><th>Régua (anos de caixa)</th><th class="n">Anos</th><th class="n">Valor para o sócio</th></tr>{regua}</table>']
-    h += ['<h3 class="sec">Ativos e patrimônio</h3><table>',
-          f"<tr><td>Ativos a mercado (sem descontar dívidas)</td><td class='n'>{brl(v.get('ativos_mercado'))}</td></tr>",
-          f"<tr><td>Patrimônio a mercado (ativos − passivos)</td><td class='n'>{brl(v.get('patrimonio_mercado'))}</td></tr>",
-          f"<tr><td>Patrimônio em venda forçada</td><td class='n'>{brl(v.get('piso_patrimonial'))}</td></tr>",
-          "</table>", '</section>']
+    cen = {x["nome"]: x for x in v["cenarios"]}
+    base = cen.get("base")
+    div_liq = (v.get("divida_bruta") or 0) - (v.get("caixa") or 0)
+    h = ['<section class="capitulo">', _cab(5, "Valuation", c),
+         _quadro("Leitura do valuation", "valor", _p(t["leitura_valuation"]), "destaque")]
+
+    # premissas
+    perp = ("com perpetuidade" if v.get("perpetuidade")
+            else "sem perpetuidade" + (f" (score {r['score']:.0f})" if r.get("score") is not None else ""))
+    cards = [("relogio", "Taxa de desconto", pct(r["taxa_desconto"]) + " a.a.",
+              f"Selic {pct(r['selic'], 2)} + prêmio de risco {_pp(r['premio_implicito'])}"),
+             ("divida", "Caixa sustentável", g.brl_compacto(v["fluxo_base"]) + "/ano",
+              "média do lucro do dono" + (f" ({v['periodo_base']} e anterior)" if v.get("periodo_base") else "")),
+             ("ebitda", "Crescimento (base)", pct(base["crescimento"]) + " a.a." if base else ND,
+              f"histórico de {pct(v['crescimento_historico'])} a.a." if v.get("crescimento_historico") is not None else ""),
+             ("calendario", "Horizonte", f"{r['horizonte_anos']} anos", perp),
+             ("faixa", "Dívida líquida", g.brl_compacto(div_liq), "dívida − caixa no último balanço")]
+    kpis = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
+                   f'<div class="val pequeno">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
+                   for ic, rot, val, obs in cards)
+    h.append(_secao("Premissas", "valor", f'<div class="kpis">{kpis}</div>'))
+
+    # projeção de DRE e caixa (cenário base) + cenários
+    sem_caixa = (v.get("fluxo_base") or 0) <= 0
+    pj = (c.get("financeiro") or {}).get("projecao")
+    nomes = {"conservador": "Conservador", "base": "Base", "otimista": "Otimista"}
+    if sem_caixa:
+        h.append(_secao("Projeção e cenários", "ebitda", '<div class="nota nd">A empresa não gera caixa '
+                        'sustentável positivo: o fluxo descontado não sustenta valor, e o preço parte do patrimônio '
+                        '(ativos a mercado menos dívidas).</div>'))
+    elif pj:
+        ncol = len(pj["colunas"])
+
+        def cel(x, margem=False):
+            if x is None:
+                return "<td class='n'></td>"
+            return f"<td class='n'>{_pct1(x) if margem else _mil(x)}</td>"
+
+        corpo = "".join(f"<tr class='{cls}'><td>{escape(rot)}</td>" + "".join(cel(x, cls == "margem") for x in vals)
+                        + "</tr>" for rot, vals, cls in pj["linhas"])
+        corpo += ("<tr class='total'><td>= Caixa considerado no valuation</td>"
+                  + "".join(cel(x) for x in pj["caixa"]) + "</tr>")
+        corpo += ("<tr class='margem'><td>Fator de desconto</td>" + "".join(
+            "<td class='n'></td>" if f is None else f"<td class='n'>{f:.3f}".replace(".", ",") + "</td>"
+            for f in pj["fator"]) + "</tr>")
+        corpo += "<tr class='sub'><td>Valor presente (VP)</td>" + "".join(cel(x) for x in pj["vp"]) + "</tr>"
+        corpo += ("<tr class='total'><td>= Valor da empresa (soma dos VP)</td>" + "<td class='n'></td>" * (ncol - 1)
+                  + f"<td class='n'>{_mil(pj['soma_vp'])}</td></tr>")
+        tab_pj = ('<table class="dre compacta projecao"><tr><th>R$ mil</th>'
+                  + "".join(f"<th class='n'>{escape(x)}</th>" for x in pj["colunas"]) + f"</tr>{corpo}</table>")
+        nota_pj = (f"Cenário base: cada linha cresce {pct(pj['crescimento'])} a.a. sobre o período-base, com margens "
+                   f"constantes; desconto a {pct(pj['taxa'])} a.a. ")
+        if pj["tem_acerto"]:
+            nota_pj += ("O caixa do valuation é a média dos períodos analisados (nunca acima do mais recente), "
+                        "por isso o ajuste à média. ")
+        if pj.get("multiplo_terminal"):
+            nota_pj += (f"Valor ao fim = valor da empresa no último ano ({pj['multiplo_terminal']:.1f}× o caixa, "
+                        "ou o valor dos ativos, o que for maior).").replace(".", ",", 1)
+        h.append(_secao("Projeção da DRE e do caixa (cenário base)", "ebitda",
+                        tab_pj + f'<div class="nota">{escape(nota_pj)}</div>'))
+    else:
+        h.append(_secao("Projeção da DRE e do caixa (cenário base)", "ebitda",
+                        _nd_nota("a DRE econômica do período-base.")))
+    barras = g.barras_valor([(nomes.get(x["nome"], x["nome"]), x["valor_patrimonio"],
+                              f"taxa {pct(x['taxa'])} · cresc. {pct(x['crescimento'])}", x["nome"] == "base")
+                             for x in v["cenarios"]])
+    tab = ('<table class="compacta"><tr><th></th>' + "".join(f"<th class='n'>{nomes.get(x['nome'], x['nome'])}</th>"
+                                                           for x in v["cenarios"]) + "</tr>"
+           + "".join(f"<tr><td>{rot}</td>" + "".join(f"<td class='n'>{fn(x)}</td>" for x in v["cenarios"]) + "</tr>"
+                     for rot, fn in (("Valor da empresa", lambda x: _mil(x["valor_empresa"])),
+                                     ("(−) Dívida e contingências", lambda x: _mil(x["valor_patrimonio"] - x["valor_empresa"])),
+                                     ("Valor para o sócio", lambda x: f"<b>{_mil(x['valor_patrimonio'])}</b>"),
+                                     ("Múltiplo do caixa", lambda x: _vezes(x["multiplo_do_fluxo"]))))
+           + "</table>")
+    bloco_cen = ('<div class="legenda-graf">Valor para o sócio por cenário</div>' + barras + tab
+                 + '<div class="nota">R$ mil. Valor para o sócio = valor da empresa − dívida líquida − '
+                   'contingências prováveis.</div>')
+
+    # football field
+    faixas = []
+    if v.get("piso_patrimonial") is not None and v.get("patrimonio_mercado") is not None:
+        faixas.append(("Patrimônio", min(v["piso_patrimonial"], v["patrimonio_mercado"]),
+                       max(v["piso_patrimonial"], v["patrimonio_mercado"]), "venda forçada a mercado"))
+    rp = v.get("regua_payback") or {}
+    if rp.get("forcada") and rp.get("maximo"):
+        faixas.append(("Régua da casa", rp["forcada"]["valor_patrimonio"], rp["maximo"]["valor_patrimonio"],
+                       f"{str(rp['forcada']['anos']).replace('.', ',')} a {str(rp['maximo']['anos']).replace('.', ',')} anos de caixa"))
+    if len(v["cenarios"]) >= 2 and not sem_caixa:
+        vals = [x["valor_patrimonio"] for x in v["cenarios"]]
+        faixas.append(("Fluxo de caixa descontado", min(vals), max(vals), "conservador a otimista"))
+    if v.get("epv") is not None:
+        faixas.append(("Lucro perpétuo (EPV)", v["epv"], v["epv"], "caixa atual sem crescimento"))
+    me = v.get("multiplo_ebitda") or {}
+    if me.get("min") is not None:
+        faixas.append(("Múltiplo de EBITDA (ref.)", me["min"], me["max"], "mercado; não entra no preço", True))
+    marcadores = [("Preço recomendado", v["preco_recomendado"], True)]
+    if c.get("pedido_vendedor"):
+        marcadores.append(("Pedido do vendedor", c["pedido_vendedor"], False))
+    nota_ff = ("Todos os métodos em valor para o sócio (já descontadas dívida líquida e contingências prováveis). "
+               "O preço recomendado parte do fluxo descontado com margem de segurança e nunca fica abaixo do patrimônio. "
+               "O múltiplo de EBITDA (tracejado) é só referência de mercado: vale para empresas maiores e com menos "
+               "risco, e não entra no preço.")
+    ff = _secao("Faixas de valor por método", "faixa", g.football_field(faixas, marcadores)
+                + f'<div class="nota">{escape(nota_ff)}</div>')
+
+    # sensibilidade + do valor ao preço
+    sens = v.get("sensibilidade") or {}
+    bloco_sens = ""
+    if sens and not sem_caixa:
+        taxas = list(sens)
+        cres = list(next(iter(sens.values())))
+        tb, cb = f"{base['taxa']:.0%}" if base else None, f"{base['crescimento']:.0%}" if base else None
+        linhas = "".join(f"<tr><td><b>{escape(tx)}</b></td>" + "".join(
+            f"<td class='n{' base' if tx == tb and g_ == cb else ''}'>{_mil(sens[tx][g_])}</td>" for g_ in cres)
+            + "</tr>" for tx in taxas)
+        bloco_sens = ('<table class="compacta sens"><tr><th>Taxa \\ cresc.</th>'
+                      + "".join(f"<th class='n'>{escape(g_)}</th>" for g_ in cres) + f"</tr>{linhas}</table>"
+                      '<div class="nota">Valor para o sócio (R$ mil). Em destaque, o cenário base.</div>')
+    preco = v["preco_recomendado"]
+    ponte = []
+    if sem_caixa and v.get("piso_patrimonial") is not None:
+        ponte.append(("Patrimônio (piso do preço)", _mil(max(v["piso_patrimonial"], v.get("patrimonio_mercado") or 0)
+                                                         if v.get("piso_usado") == "mercado" else v["piso_patrimonial"]), ""))
+    elif base:
+        ponte.append(("Valor para o sócio (cenário base)", _mil(base["valor_patrimonio"]), ""))
+        if base["valor_patrimonio"] > 0 and preco < base["valor_patrimonio"]:
+            ponte.append(("(−) Margem de segurança", _mil(preco - base["valor_patrimonio"]),
+                          f"{(1 - preco / base['valor_patrimonio']) * 100:.0f}%"))
+    ponte.append(("= Preço recomendado", f"<b>{_mil(preco)}</b>", "total"))
+    if v.get("payback_preco"):
+        ponte.append(("Payback do preço", f'{v["payback_preco"]:.2f}'.replace(".", ",") + "&nbsp;anos",
+                      f"régua da casa: até {str(rp['maximo']['anos']).replace('.', ',')} anos" if rp.get("maximo") else ""))
+    tab_preco = ('<table class="compacta">' + "".join(
+        f"<tr class='{'total' if obs == 'total' else ''}'><td>{escape(rot)}</td><td class='n'>{val}</td>"
+        f"<td class='obs-cel'>{escape('' if obs == 'total' else obs)}</td></tr>" for rot, val, obs in ponte)
+        + '</table><div class="nota">R$ mil. A margem de segurança protege o comprador contra o que os números '
+          'ainda não comprovam.</div>')
+    bloco_sens = bloco_sens or '<div class="nota nd">Não se aplica: sem caixa sustentável positivo.</div>'
+    if sem_caixa:
+        h += [ff, '<div class="duas">', _secao("Sensibilidade", "relogio", bloco_sens),
+              _secao("Do valor ao preço", "valor", tab_preco), '</div>']
+    else:
+        h += ['<div class="duas">', _secao("Cenários", "faixa", bloco_cen),
+              '<div>' + _secao("Do valor ao preço", "valor", tab_preco) + _secao("Sensibilidade", "relogio", bloco_sens)
+              + '</div>', '</div>', ff]
+
+    # quanto vira o investimento, ano a ano
+    ev = _evolucao_inv(c)
+    if ev:
+        series = [("empresa", ev["empresa"], g.LARANJA), ("Selic", ev["selic"], g.TINTA),
+                  ("IPCA+", ev["ipca_mais"], "#9A9A9A")]
+        linhas_ev = "".join(
+            f"<tr><td>{'Hoje' if i == 0 else ano}</td>" + "".join(
+                f"<td class='n'>{_mil(serie[i])}"
+                + (f" <small>({(serie[i] / serie[0] - 1) * 100:+.0f}%)</small>" if i else "") + "</td>"
+                for serie in (ev["empresa"], ev["selic"], ev["ipca_mais"])) + "</tr>"
+            for i, ano in enumerate(ev["anos"]))
+        linhas_ev += ("<tr class='total'><td>Retorno a.a.</td>" + "".join(
+            f"<td class='n'>{pct(x) if x is not None else ND}</td>" for x in (ev["tir"], ev["ret_selic"], ev["ret_ipca"]))
+            + "</tr>")
+        tab_ev = ('<table class="compacta"><tr><th>R$ mil</th><th class="n">Empresa</th><th class="n">Selic</th>'
+                  f'<th class="n">IPCA+</th></tr>{linhas_ev}</table>')
+        nota_ev = (f"Desembolso do comprador: {g.brl_compacto(ev['desembolso'])} (preço recomendado + dívida assumida). "
+                   "Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF; o retorno da "
+                   "empresa é a TIR do negócio. A renda fixa é garantida, o caixa da empresa não: a diferença é o "
+                   f"prêmio pelo risco. IPCA+ com juro real de {pct(c.get('juro_real', 0.06))} a.a.; Selic e IPCA "
+                   "esperados pela Focus/BCB. Entre parênteses, o ganho acumulado.")
+        h.append(_secao("Quanto vira o investimento", "retorno",
+                        '<div class="duas"><div><div class="legenda-graf">Valor acumulado do mesmo desembolso (R$)</div>'
+                        + g.linhas_evolucao(ev["anos"], series) + f'</div><div>{tab_ev}</div></div>'
+                        + f'<div class="nota">{escape(nota_ev)}</div>'))
+    h.append('</section>')
     return "".join(h)
 
 

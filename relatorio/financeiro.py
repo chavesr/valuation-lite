@@ -429,3 +429,56 @@ def operacional_f5(qual: dict) -> dict | None:
 
 def leituras_verticais(qual: dict) -> dict[str, dict]:
     return {x["vertical"]: x for x in qual.get("leitura_verticais") or []}
+
+
+# --------------------------------------------------------------------------- capítulo 5: projeção ano a ano
+
+
+def projecao_dre(dres: list[dict], v: dict, ano0: int) -> dict | None:
+    """DRE econômica do período-base projetada no cenário base, até o caixa e o valor presente de cada ano.
+
+    Cada linha cresce à taxa do cenário base (margens constantes). O caixa usado no valuation é a média dos
+    períodos (nunca acima do mais recente), não o ano-base puro: a diferença vira a linha "ajuste à média", e o
+    caixa considerado fecha com os fluxos do motor. A soma dos VP (com o valor ao fim) = valor da empresa."""
+    base_c = next((x for x in v.get("cenarios", []) if x["nome"] == "base"), None)
+    fluxo = v.get("fluxo_base") or 0
+    d = next((x for x in dres if x["periodo"] == v.get("periodo_base")), None)
+    if not base_c or not base_c.get("fluxos") or fluxo <= 0 or not d:
+        return None
+
+    def conta(nome):
+        return sum(l["valor"] for l in d["linhas"] if l["conta"] == nome)
+
+    rb, trib, cmv = conta("Receita bruta"), conta("Tributos sobre a receita"), conta("Custo das vendas")
+    pes, adm = conta("Despesas com pessoal"), conta("Despesas administrativas e comerciais")
+    aj = sum(a["valor"] for a in d.get("ajustes", []) if a["status"] in ("aplicado", "aprovado"))
+    ebitda = d["ebitda"]
+    outros = ebitda - (rb + trib + cmv + pes + adm + aj)
+    capex = -(d.get("capex_manutencao") or 0)
+    oe = d["owner_earnings"] if d.get("owner_earnings") is not None else d.get("lucro_economico", 0.0)
+    ir = oe - ebitda - capex
+    acerto = fluxo - oe
+    g, taxa, n = base_c["crescimento"], base_c["taxa"], len(base_c["fluxos"])
+
+    modelo = [("Receita bruta", rb, ""), ("(−) Tributos sobre a receita", trib, ""), ("(−) Custo das vendas", cmv, ""),
+              ("= Lucro bruto", rb + trib + cmv, "sub"), ("(−) Despesas com pessoal", pes, ""),
+              ("(−) Despesas administrativas e comerciais", adm, ""),
+              ("(−) Ajustes de normalização", aj, ""), ("(±) Outros", outros, ""),
+              ("= EBITDA econômico", ebitda, "sub"), ("(−) Investimento de manutenção", capex, ""),
+              ("(−) Impostos sobre o lucro", ir, ""), ("= Caixa do dono no período", oe, "sub"),
+              ("(±) Ajuste à média dos períodos", acerto, "")]
+    linhas = []
+    for rot, val, cls in modelo:
+        if cls == "" and abs(val) < 1000:
+            continue
+        linhas.append((rot, [val] + [val * (1 + g) ** t for t in range(1, n + 1)] + [None], cls))
+        if rot == "= EBITDA econômico":
+            linhas.append(("Margem EBITDA", [ebitda / rb * 100 if rb else None] * (n + 1) + [None], "margem"))
+    caixa = [fluxo] + list(base_c["fluxos"]) + [base_c["valor_terminal"]]
+    fator = [None] + [1 / (1 + taxa) ** t for t in range(1, n + 1)] + [1 / (1 + taxa) ** n]
+    vp = [None] + [c_ * f_ for c_, f_ in zip(caixa[1:], fator[1:])]
+    return {"colunas": [f"{d['periodo']} (base)"] + [str(ano0 + t) for t in range(1, n + 1)] + ["Valor ao fim"],
+            "linhas": linhas, "caixa": caixa, "fator": fator, "vp": vp, "soma_vp": sum(vp[1:]),
+            "valor_empresa": base_c["valor_empresa"], "crescimento": g, "taxa": taxa,
+            "multiplo_terminal": base_c["valor_terminal"] / caixa[n] if caixa[n] else None,
+            "tem_acerto": abs(acerto) >= 1000}
