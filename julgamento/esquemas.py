@@ -274,4 +274,3 @@ class TextosRelatorio(BaseModel):
     leitura_riscos: str = Field(min_length=60, max_length=1200, description="principais riscos e contingências")
     leitura_valuation: str = Field(min_length=60, max_length=1200, description="como chegamos ao valor, em linguagem simples")
     estrutura_transacao: str = Field(min_length=60, max_length=1200, description="como a operação pode ser feita")
-    proximos_passos: list[str] = Field(min_length=2, max_length=7, description="o que o dono e a ND fazem a seguir")

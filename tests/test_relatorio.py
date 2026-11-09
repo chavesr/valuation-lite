@@ -28,8 +28,7 @@ TEXTOS = {"case_id": "x", "tese": "Indústria de alimentos com 28 anos de mercad
           "leitura_financeira": "A receita comprovada nos extratos supera a declarada; a margem calculada não é crível.",
           "leitura_riscos": "Informalidade e dependência do dono são os riscos centrais; ambos têm caminho de solução.",
           "leitura_valuation": "Descontamos o caixa sustentável pela taxa da casa e conferimos pela régua de payback.",
-          "estrutura_transacao": "Venda total, com retenção de parte do preço para as contingências possíveis.",
-          "proximos_passos": ["Enviar DRE com custos.", "Regularizar a venda sem nota."]}
+          "estrutura_transacao": "Venda total, com retenção de parte do preço para as contingências possíveis."}
 
 
 def _revisao(graves):

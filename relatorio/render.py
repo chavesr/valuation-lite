@@ -911,13 +911,19 @@ def cap6_transacao(c: dict) -> str:
                  if sug["n"] else "")
         h.append(_secao("Como a operação fecha (estrutura sugerida)", "calendario", g.fluxograma(etapas)))
         if crono:
+            cond = [f"Comissão ND de {g.brl_compacto(sug['comissao'])} paga na assinatura, sobre o valor de ida a mercado.",
+                    f"Parcelas corrigidas pelo CDI; cada uma usa {_pct1(sug['parcela_caixa'] * 100)} do caixa mensal "
+                    f"projetado (limite da casa: {pg['limite']:.0%})." if sug["parcela_caixa"] else
+                    "Parcelas corrigidas pelo CDI.",
+                    "Cotas alienadas ao sócio até a última parcela: se o comprador não pagar, as cotas voltam."]
+            if sug["escrow"]:
+                cond.append(f"Escrow de {g.brl_compacto(sug['escrow'])} em conta vinculada, liberado ao sócio quando "
+                            "as contingências possíveis prescreverem.")
+            if sug["earnout"]:
+                cond.append(f"Earn-out até {g.brl_compacto(sug['earnout'])}, medido pelo caixa anual e pago no mês 24.")
             h.append('<div class="duas"><div><div class="legenda-graf">Parcela mensal (laranja) contra o caixa '
                      'mensal projetado (cinza)</div>' + crono + '</div><div>'
-                     + _secao("Próximos passos", "positivo", _ul(t["proximos_passos"])) + '</div></div>')
-        else:
-            h.append(_secao("Próximos passos", "positivo", _ul(t["proximos_passos"])))
-    else:
-        h.append(_secao("Próximos passos", "positivo", _ul(t["proximos_passos"])))
+                     + _secao("Condições da estrutura sugerida", "positivo", _ul(cond)) + '</div></div>')
     h += ['<div class="disclaimer">Relatório preparado pela Nova Direção com base em documentos e informações fornecidos '
           'pela empresa e por seus sócios, não auditados. Os valores são estimativas para orientar a negociação e não '
           'constituem garantia de preço. A estrutura de pagamento é uma simulação, não uma oferta; o IR do sócio é '
