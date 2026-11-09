@@ -282,3 +282,87 @@ def verticais_risco(v: dict, qual: dict) -> list[dict]:
         out.append({"vertical": nome, "nota": round(sum(notas) / len(notas), 1) if notas else None,
                     "origem": ", ".join(origem), "pendente": pend})
     return out
+
+
+# --------------------------------------------------------------------------- planilha ND (abas 5, 10 e 11)
+# Mesmo formato vale para o F5 (fase seguinte): o relatório não sabe de onde veio, só a "fonte" no rodapé.
+
+VOLUME, PRECO = "Volume (quanto foi vendido)", "Preço médio / ticket"
+
+
+def _receita_do_ano(dre: dict, dados, ano: int) -> float | None:
+    a = next((x for x in dre["abertas"] if x["ano"] == ano and x["meses"] == 12), None)
+    if a and a.get("rb"):
+        return a["rb"]
+    p = getattr(dados, "planilha_nd", None)
+    if p is not None:
+        meses = {c: v for c, v in p.faturamento_mensal_total().items() if c.startswith(f"{ano}-")}
+        if len(meses) == 12:
+            return sum(meses.values())
+    return None
+
+
+def clientes_planilha(dados, dre: dict) -> dict | None:
+    """Maiores clientes do último ano da aba 5_Clientes, com setor e participação na receita do ano."""
+    p = getattr(dados, "planilha_nd", None)
+    linhas = [l for l in (p.abas.get("5_Clientes", []) if p else [])
+              if l.get("ano") and l.get("cliente") and l.get("faturamento_no_ano_r")]
+    if not linhas:
+        return None
+    ano = int(max(l["ano"] for l in linhas))
+    doano = sorted((l for l in linhas if int(l["ano"]) == ano), key=lambda l: -l["faturamento_no_ano_r"])
+    receita = _receita_do_ano(dre, dados, ano)
+    base = receita or sum(l["faturamento_no_ano_r"] for l in doano)
+    part = [l["faturamento_no_ano_r"] / base for l in doano]
+    setores: dict[str, float] = {}
+    for l in doano:
+        if l.get("setor_do_cliente"):
+            setores[l["setor_do_cliente"]] = setores.get(l["setor_do_cliente"], 0.0) + l["faturamento_no_ano_r"]
+    return {"ano": ano, "fonte": "planilha da ND (aba 5_Clientes)", "base_receita": receita is not None,
+            "clientes_pj": len(doano), "rotulo_qtd": "Clientes listados",
+            "maior": part[0], "top5": sum(part[:5]), "top10": sum(part[:10]),
+            "ranking": [{"cliente": l["cliente"], "valor": l["faturamento_no_ano_r"], "participacao": x,
+                         "setor": l.get("setor_do_cliente")} for l, x in zip(doano[:10], part)],
+            "por_setor": sorted(((s, v / base * 100) for s, v in setores.items()), key=lambda x: -x[1])}
+
+
+def linhas_receita_planilha(dados) -> dict | None:
+    """{"anos": [..], "linhas": [(nome, [valor|None por ano])]} da aba 10_Linhas_Receita (últimos 3 anos)."""
+    p = getattr(dados, "planilha_nd", None)
+    regs = [l for l in (p.abas.get("10_Linhas_Receita", []) if p else [])
+            if l.get("ano") and l.get("linha_de_receita") and l.get("receita_no_ano_r") is not None]
+    if not regs:
+        return None
+    anos = sorted({int(l["ano"]) for l in regs})[-3:]
+    tab: dict[str, dict[int, float]] = {}
+    for l in regs:
+        if int(l["ano"]) in anos:
+            d = tab.setdefault(l["linha_de_receita"].strip(), {})
+            d[int(l["ano"])] = d.get(int(l["ano"]), 0.0) + l["receita_no_ano_r"]
+    ordem = sorted(tab, key=lambda n: -tab[n].get(anos[-1], 0.0))
+    return {"anos": [str(a) for a in anos], "linhas": [(n, [tab[n].get(a) for a in anos]) for n in ordem],
+            "fonte": "planilha da ND (aba 10_Linhas_Receita)"}
+
+
+def operacional_planilha(dados) -> dict | None:
+    """Volume e preço médio por ano (aba 11_Indicadores); só anos com um volume e um preço."""
+    p = getattr(dados, "planilha_nd", None)
+    regs = [l for l in (p.abas.get("11_Indicadores", []) if p else [])
+            if l.get("ano") and l.get("tipo") in (VOLUME, PRECO) and l.get("valor_no_ano") is not None]
+    por_ano: dict[int, dict[str, list[dict]]] = {}
+    for l in regs:
+        por_ano.setdefault(int(l["ano"]), {}).setdefault(l["tipo"], []).append(l)
+    anos = sorted(a for a, t in por_ano.items() if len(t.get(VOLUME, [])) == 1 and len(t.get(PRECO, [])) == 1)[-3:]
+    if not anos:
+        return None
+    ult = por_ano[anos[-1]]
+
+    def serie(tipo):
+        ref = ult[tipo][0]
+        return {"nome": ref.get("indicador") or tipo, "unidade": ref.get("unidade") or "",
+                "valores": [por_ano[a][tipo][0]["valor_no_ano"] for a in anos]}
+
+    vol, pre = serie(VOLUME), serie(PRECO)
+    return {"anos": [str(a) for a in anos], "volume": vol, "preco": pre,
+            "receita": [v * x for v, x in zip(vol["valores"], pre["valores"])],
+            "fonte": "planilha da ND (aba 11_Indicadores)"}

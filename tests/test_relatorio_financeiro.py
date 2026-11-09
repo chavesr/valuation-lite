@@ -56,3 +56,47 @@ def test_verticais_sem_nota_ficam_nd():
     assert out["Gestão e dependência do dono"]["nota"] == 2 and out["Gestão e dependência do dono"]["pendente"]
     assert out["Diferencial e intangíveis"]["nota"] == 5
     assert out["Operação e ativos físicos"]["nota"] is None
+
+
+def _planilha(abas, faturamento=None):
+    total = faturamento or {}
+    return SimpleNamespace(abas=abas, faturamento_mensal_total=lambda: total)
+
+
+def test_clientes_da_planilha_com_setor_e_participacao_na_receita():
+    dre = {"abertas": [{"ano": 2025, "meses": 12, "rb": 1_000_000.0}]}
+    linhas = [{"ano": 2025, "cliente": "A", "setor_do_cliente": "Saúde", "faturamento_no_ano_r": 300_000.0},
+              {"ano": 2025, "cliente": "B", "setor_do_cliente": "Saúde", "faturamento_no_ano_r": 100_000.0},
+              {"ano": 2025, "cliente": "C", "faturamento_no_ano_r": 200_000.0},
+              {"ano": 2024, "cliente": "A", "faturamento_no_ano_r": 900_000.0}]
+    cl = f.clientes_planilha(SimpleNamespace(planilha_nd=_planilha({"5_Clientes": linhas})), dre)
+    assert cl["ano"] == 2025 and [r["cliente"] for r in cl["ranking"]] == ["A", "C", "B"]
+    assert cl["maior"] == 0.3 and round(cl["top5"], 2) == 0.6 and cl["base_receita"]
+    assert cl["por_setor"] == [("Saúde", 40.0)]
+
+
+def test_operacional_so_com_um_volume_e_um_preco_por_ano():
+    V, P = f.VOLUME, f.PRECO
+    regs = [{"ano": 2024, "tipo": V, "valor_no_ano": 100.0, "indicador": "Milheiros", "unidade": "mil"},
+            {"ano": 2024, "tipo": P, "valor_no_ano": 10.0, "indicador": "Preço", "unidade": "R$"},
+            {"ano": 2025, "tipo": V, "valor_no_ano": 120.0, "indicador": "Milheiros", "unidade": "mil"},
+            {"ano": 2025, "tipo": P, "valor_no_ano": 11.0, "indicador": "Preço", "unidade": "R$"},
+            {"ano": 2023, "tipo": V, "valor_no_ano": 90.0}]  # sem preço: fica de fora
+    op = f.operacional_planilha(SimpleNamespace(planilha_nd=_planilha({"11_Indicadores": regs})))
+    assert op["anos"] == ["2024", "2025"] and op["receita"] == [1000.0, 1320.0]
+    assert op["volume"]["nome"] == "Milheiros" and op["preco"]["unidade"] == "R$"
+
+
+def test_linhas_de_receita_ordenadas_pelo_ultimo_ano():
+    regs = [{"ano": 2024, "linha_de_receita": "Serviço", "receita_no_ano_r": 50.0},
+            {"ano": 2025, "linha_de_receita": "Serviço", "receita_no_ano_r": 40.0},
+            {"ano": 2025, "linha_de_receita": "Produto", "receita_no_ano_r": 200.0}]
+    lr = f.linhas_receita_planilha(SimpleNamespace(planilha_nd=_planilha({"10_Linhas_Receita": regs})))
+    assert lr["anos"] == ["2024", "2025"]
+    assert lr["linhas"] == [("Produto", [None, 200.0]), ("Serviço", [50.0, 40.0])]
+
+
+def test_sem_planilha_nada_quebra():
+    d = SimpleNamespace(planilha_nd=None)
+    assert f.clientes_planilha(d, {"abertas": []}) is None
+    assert f.linhas_receita_planilha(d) is None and f.operacional_planilha(d) is None

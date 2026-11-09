@@ -168,6 +168,13 @@ def _textos(pasta: Path, modo: str, modelo: str | None, executor, forcar: bool) 
     return t, fora
 
 
+def _clientes_sped(c: dict | None) -> dict | None:
+    if not c or not c.get("ranking"):
+        return None
+    return c | {"fonte": "notas fiscais (SPED); vendas a pessoa física ficam fora do ranking",
+                "rotulo_qtd": "Clientes empresa", "base_receita": True}
+
+
 def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     from tarantino.mercado import selic_por_horizonte
 
@@ -248,7 +255,9 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                                    if a["meses"] < 12 and a.get("rb")), None),
                   "ponte": calc_fin.ponte_economica(dre_c, dres, v["periodo_base"]),
                   "giro": calc_fin.giro_divida(dados, dre_c, dres, v), "verticais": calc_fin.verticais_risco(v, qual),
-                  "clientes": dados.concentracao_clientes}
+                  "clientes": calc_fin.clientes_planilha(dados, dre_c) or _clientes_sped(dados.concentracao_clientes),
+                  "linhas_receita": calc_fin.linhas_receita_planilha(dados),
+                  "operacional": calc_fin.operacional_planilha(dados)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
             "qual": qual, "ano": hoje.year, "focus_selic": focus_selic, "focus_ipca": focus_ipca,

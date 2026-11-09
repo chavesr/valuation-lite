@@ -86,6 +86,7 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .perfil .val { font-size: 8pt; color: var(--ink); line-height: 1.3; }
 .perfil .val small { font-size: 6.8pt; color: var(--gray2); }
 .bloco-junto { break-inside: avoid; }
+.formula { background: var(--cinza-quadro); border-radius: 2mm; padding: 1.6mm 3mm; margin: 1mm 0 1.4mm; font-size: 8.4pt; }
 .kpis4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6mm; margin-bottom: 2mm; }
 .nota.nd { color: var(--gray); font-style: italic; }
 table.dre tr.sub td { font-weight: 700; }
@@ -334,22 +335,51 @@ def _mes(comp: str) -> str:
     return f"{meses[int(m) - 1]}/{a[2:]}"
 
 
-def _bloco_clientes(cl: dict | None, ano_base: str) -> str:
+def _bloco_clientes(cl: dict | None) -> str:
     if not cl or not cl.get("ranking"):
         return _nd_nota("os 20 maiores clientes dos últimos 3 anos, com faturamento no ano e setor de atuação "
                         "(aba 5_Clientes da planilha da ND) ou a curva ABC das notas fiscais.")
-    linhas = "".join(f"<tr><td>{i}</td><td>{escape(r['cliente'])}</td><td class='n'>{_mil(r['valor'])}</td>"
-                     f"<td class='n'>{_pct1(r['participacao'] * 100)}</td><td>{escape(r.get('setor') or ND)}</td></tr>"
+    tem_setor = any(r.get("setor") for r in cl["ranking"])
+    linhas = "".join(f"<tr><td>{i}</td><td>{escape(r['cliente'])}</td>"
+                     + (f"<td>{escape(r.get('setor') or ND)}</td>" if tem_setor else "")
+                     + f"<td class='n'>{_mil(r['valor'])}</td><td class='n'>{_pct1(r['participacao'] * 100)}</td></tr>"
                      for i, r in enumerate(cl["ranking"][:10], 1))
-    cards = [("Clientes empresa", str(cl.get("clientes_pj") or ND), "no período"),
+    ano = f" em {cl['ano']}" if cl.get("ano") else ""
+    cards = [(cl.get("rotulo_qtd") or "Clientes", str(cl.get("clientes_pj") or ND), ano.strip() or "no período"),
              ("Maior cliente", _pct1(cl["maior"] * 100), "da receita"),
              ("5 maiores", _pct1(cl["top5"] * 100), "da receita"),
              ("10 maiores", _pct1(cl["top10"] * 100), "da receita")]
     cards_html = "".join(f'<div class="kpi mini"><div class="rot">{escape(r)}</div><div class="val">{escape(x)}</div>'
                          f'<div class="obs">{escape(o)}</div></div>' for r, x, o in cards)
-    return (f'<div class="kpis4">{cards_html}</div><table><tr><th>#</th><th>Cliente</th><th class="n">Receita (R$ mil)</th>'
-            f'<th class="n">Part.</th><th>Setor</th></tr>{linhas}</table>'
-            '<div class="nota">Fonte: notas fiscais (SPED). Vendas a pessoa física ficam fora do ranking.</div>')
+    tabela = (f'<table class="compacta"><tr><th>#</th><th>Cliente</th>' + ("<th>Setor</th>" if tem_setor else "")
+              + f'<th class="n">Receita{escape(ano)} (R$ mil)</th><th class="n">Part.</th></tr>{linhas}</table>')
+    setores = cl.get("por_setor") or []
+    lado = (('<div class="legenda-graf">Receita dos clientes listados por setor (% da receita)</div>'
+             + g.barras_percentual(setores)) if setores else "")
+    corpo = (f'<div class="duas"><div>{tabela}</div><div>{lado}</div></div>' if lado else tabela)
+    obs = f"Fonte: {escape(cl.get('fonte') or ND)}."
+    if not cl.get("base_receita", True):
+        obs += " Sem a receita do ano: participação sobre a soma dos clientes listados (superestima a concentração)."
+    return f'<div class="kpis4">{cards_html}</div>{corpo}<div class="nota">{obs}</div>'
+
+
+def _bloco_operacional(op: dict) -> str:
+    vol, pre = op["volume"], op["preco"]
+    ult = len(op["anos"]) - 1
+
+    def graf(serie, titulo):
+        itens = [(a, v, "") for a, v in zip(op["anos"], serie["valores"])]
+        un = f" ({escape(serie['unidade'])})" if serie["unidade"] else ""
+        return (f'<div class="legenda-graf">{escape(serie["nome"])}{un}</div>'
+                + g.colunas_serie(itens, {ult}, titulo=titulo))
+
+    num = lambda v: f"{v:,.0f}".replace(",", ".") if v >= 100 else f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")  # noqa: E731
+    conta = (f'<div class="formula"><b>{escape(op["anos"][-1])}:</b> {num(vol["valores"][-1])} {escape(vol["unidade"])} '
+             f'× {num(pre["valores"][-1])} {escape(pre["unidade"])} = <b>{escape(g.brl_compacto(op["receita"][-1]))}</b> '
+             'de receita</div>')
+    return (f'<div class="duas"><div>{graf(vol, "Volume por ano")}</div><div>{graf(pre, "Preço médio por ano")}</div></div>'
+            + conta + f'<div class="nota">Fonte: {escape(op.get("fonte") or ND)}. Volume × preço explica a receita; '
+            'diferença para a DRE vem de outras linhas, devoluções e descontos.</div>')
 
 
 def cap4_financeiro(c: dict) -> str:
@@ -359,14 +389,14 @@ def cap4_financeiro(c: dict) -> str:
          _quadro("Leitura financeira", "receita", _p(t["leitura_financeira"]), "destaque")]
 
     # análise operacional (x · y = receita) e base de clientes
-    op = q.get("operacional") or {}
-    if op.get("indicadores"):
-        h.append(_secao("Análise operacional", "ebitda", g.operacional(op)))  # fase 2 (F5/planilha)
+    op = f.get("operacional")
+    if op:
+        h.append(_secao("Análise operacional", "ebitda", _bloco_operacional(op)))
     else:
         h.append(_secao("Análise operacional", "ebitda", _nd_nota(
             "os dois indicadores que explicam a receita, ano a ano (ex.: volume vendido e preço médio; "
             "clientes ativos e ticket médio).")))
-    h.append(_secao("Base de clientes", "pessoas", _bloco_clientes(f.get("clientes"), v["periodo_base"])))
+    h.append(_secao("Base de clientes", "pessoas", _bloco_clientes(f.get("clientes"))))
 
     # receita: anual + sazonalidade + linhas
     ra = f["receita_anual"]
@@ -387,25 +417,26 @@ def cap4_financeiro(c: dict) -> str:
     m = f.get("mensal")
     if m:
         top = sorted(range(len(m["valores"])), key=lambda i: -m["valores"][i])[:3]
-        itens = [(_mes(k).split("/")[0][:1].upper() if len(m["meses"]) > 12 else _mes(k), val, "")
-                 for k, val in zip(m["meses"], m["valores"])]
+        itens = [(_mes(k), val, "") for k, val in zip(m["meses"], m["valores"])]
         bloco_mes = ('<div class="legenda-graf">Faturamento mensal (R$) · em laranja, os 3 maiores meses</div>'
-                     + g.colunas_serie(itens, set(top), rotulo_valor=len(itens) <= 12, titulo="Faturamento mensal")
+                     + g.colunas_serie(itens, set(top), altura=110, largura=660, titulo="Faturamento mensal")
                      + f'<div class="nota">{_mes(m["meses"][0])} a {_mes(m["meses"][-1])} · fonte: {escape(m["fonte"] or ND)}.</div>')
     else:
         bloco_mes = _nd_nota("o faturamento mês a mês dos últimos 24 meses (PGDAS-D ou aba 4_Faturamento).")
-    linhas_rec = q.get("linhas_receita") or []
+    linhas_rec = f.get("linhas_receita")
     mix = q.get("mix_receita") or []
     if linhas_rec:
-        bloco_linhas = g.linhas_receita(linhas_rec)  # fase 2
+        bloco_linhas = ('<div class="legenda-graf">Receita por linha (R$) e participação no último ano</div>'
+                        + g.linhas_empilhadas(linhas_rec["anos"], linhas_rec["linhas"])
+                        + f'<div class="nota">Fonte: {escape(linhas_rec["fonte"])}.</div>')
     elif mix:
         bloco_linhas = ('<div class="legenda-graf">Participação na receita (declarada, último ano)</div>'
                         + g.barras_percentual([(x["item"], x["percentual"]) for x in mix]))
     else:
         bloco_linhas = _nd_nota("a receita de cada linha de produto ou serviço nos últimos 3 anos.")
     h += ['<div class="duas">', _secao("Análise de receita", "receita", bloco_ano),
-          _secao("Sazonalidade", "calendario", bloco_mes), '</div>',
-          _secao("Linhas de receita", "faixa", bloco_linhas)]
+          _secao("Linhas de receita", "faixa", bloco_linhas), '</div>',
+          _secao("Sazonalidade", "calendario", bloco_mes)]
 
     # custos
     cu, dre = f.get("custos"), f["dre"]

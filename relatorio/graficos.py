@@ -534,17 +534,17 @@ def _curto(v: float) -> str:
 
 
 def colunas_serie(itens: list[tuple[str, float, str]], destaques: set[int] | None = None, altura: int = 128,
-                  rotulo_valor: bool = True, titulo: str = "Série por período") -> str:
+                  rotulo_valor: bool = True, titulo: str = "Série por período", largura: int = 330) -> str:
     """Colunas de uma série (cinza), destaque em laranja; `itens` = (rótulo do eixo, valor, texto extra no topo)."""
     destaques = destaques or set()
     n = max(len(itens), 1)
-    L, esq, dir_, topo, base = 330, 4, 4, 24, altura - 22
+    L, esq, dir_, topo, base = largura, 4, 4, 24, altura - 22
     vals = [v for _, v, _ in itens]
     vmin, vmax = min(0.0, *vals), max(0.0, *vals) or 1.0
     y = lambda v: topo + (vmax - v) / ((vmax - vmin) or 1) * (base - topo)  # noqa: E731
     banda = (L - esq - dir_) / n
     w = min(26.0, banda * 0.62)
-    fonte = 8 if n <= 8 else 6.4
+    fonte = 8 if n * 330 / largura <= 8 else 6.4
     c = [f'<line x1="{esq}" x2="{L - dir_}" y1="{y(0):.1f}" y2="{y(0):.1f}" stroke="{MUTED}" stroke-width="1"/>']
     for i, (rot, v, extra) in enumerate(itens):
         cx = esq + banda * (i + 0.5)
@@ -680,3 +680,42 @@ def radar_verticais(notas: list[tuple[str, float | None]]) -> str:
                  f'<text x="{x:.1f}" y="{yy - 6:.1f}" font-size="8" font-weight="700" fill="{TINTA}" '
                  f'text-anchor="middle">{txt}</text>')
     return _svg(L, A, "".join(c), "Mapa de risco por vertical (5 = mais sólido)")
+
+
+def linhas_empilhadas(anos: list[str], linhas: list[tuple[str, list[float | None]]]) -> str:
+    """Receita por linha (R$) empilhada por ano: a maior linha em laranja, as demais em cinza; total no topo e
+    legenda com a participação no último ano. Até 5 linhas; o resto vira 'Outras'."""
+    if len(linhas) > 5:
+        resto = [sum(v or 0 for v in vals) for vals in zip(*[vals for _, vals in linhas[4:]])]
+        linhas = linhas[:4] + [("Outras", resto)]
+    L, A, esq, topo, base = 330, 150, 4, 20, 128
+    tons = ["#BFBFBF", "#9A9A9A", "#E3E3E3", "#6B6B6B"]
+    cores = [LARANJA] + tons
+    totais = [sum(vals[i] or 0 for _, vals in linhas) for i in range(len(anos))]
+    vmax = max(totais) or 1.0
+    larg_graf = 170
+    banda = larg_graf / max(len(anos), 1)
+    w = min(32.0, banda * 0.6)
+    y = lambda v: base - v / vmax * (base - topo)  # noqa: E731
+    c = []
+    for i, ano in enumerate(anos):
+        cx = esq + banda * (i + 0.5)
+        acum = 0.0
+        for j, (_, vals) in enumerate(linhas):
+            v = vals[i] or 0.0
+            if v <= 0:
+                continue
+            c.append(f'<rect x="{cx - w / 2:.1f}" y="{y(acum + v):.1f}" width="{w:.1f}" height="{y(acum) - y(acum + v):.1f}" '
+                     f'fill="{cores[j % len(cores)]}" stroke="{PAPEL}" stroke-width="0.8"/>')
+            acum += v
+        c.append(f'<text x="{cx:.1f}" y="{y(acum) - 4:.1f}" font-size="8" fill="{TINTA}" text-anchor="middle" '
+                 f'font-weight="700">{escape(_curto(acum))}</text>')
+        c.append(f'<text x="{cx:.1f}" y="{A - 8}" font-size="8.5" fill="{TINTA}" text-anchor="middle">{escape(ano)}</text>')
+    lx, tot = esq + larg_graf + 12, totais[-1] or 1.0
+    for j, (nome, vals) in enumerate(linhas):
+        yy = topo + 4 + j * 22
+        part = f"{(vals[-1] or 0) / tot * 100:.0f}% em {anos[-1]}"
+        c.append(f'<rect x="{lx}" y="{yy - 7}" width="8" height="8" rx="1.5" fill="{cores[j % len(cores)]}"/>')
+        c.append(_tspans(lx + 12, yy, _cortar(nome, 24, 1), 8, TINTA, ancora="start"))
+        c.append(f'<text x="{lx + 12}" y="{yy + 10}" font-size="7.2" fill="{MUTED}">{escape(part)}</text>')
+    return _svg(L, A, "".join(c), "Receita por linha de produto ou serviço")
