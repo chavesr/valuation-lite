@@ -18,7 +18,9 @@ Tipo = Literal["venda_total", "venda_parcial", "entrada_socio"]
 NOMES = {"venda_total": "venda total", "venda_parcial": "venda parcial", "entrada_socio": "entrada de sócio"}
 LEIA = ("tipo: venda_total | venda_parcial | entrada_socio · percentual: fração das cotas negociadas (0,30 = 30%) · "
         "aporte: dinheiro novo que entra na empresa (entrada de sócio), em R$ · pedido_vendedor: quanto o dono pede "
-        "pela participação, em R$")
+        "pela participação, em R$ · entrada_aceita / prazo_aceito_meses / aceita_earnout: forma de pagamento que o "
+        "sócio aceita (reuniões; vazio = premissa ND de 25% + 24 meses) · custo_cotas: custo de aquisição das cotas "
+        "na declaração do sócio, em R$ (para o IR sobre o ganho de capital)")
 
 
 class Finalidade(BaseModel):
@@ -26,6 +28,10 @@ class Finalidade(BaseModel):
     percentual: float = Field(1.0, gt=0, le=1)
     aporte: float | None = None
     pedido_vendedor: float | None = None
+    entrada_aceita: float | None = Field(None, ge=0, le=1)  # fração do preço que o sócio aceita receber na entrada
+    prazo_aceito_meses: int | None = Field(None, ge=0, le=120)
+    aceita_earnout: bool | None = None
+    custo_cotas: float | None = None  # custo de aquisição das cotas (capital integralizado), para o IR do sócio
 
     @property
     def descricao(self) -> str:

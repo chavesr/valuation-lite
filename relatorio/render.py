@@ -88,6 +88,8 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .bloco-junto { break-inside: avoid; }
 .formula { background: var(--cinza-quadro); border-radius: 2mm; padding: 1.6mm 3mm; margin: 1mm 0 1.4mm; font-size: 8.4pt; }
 td.base { background: var(--laranja-claro); font-weight: 700; outline: 1.5px solid var(--laranja); }
+td.col, th.col { background: var(--laranja-claro); }
+th.col { color: var(--ink); }
 td.obs-cel { color: var(--gray); font-size: 7pt; }
 .kpis4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1.6mm; margin-bottom: 2mm; }
 .nota.nd { color: var(--gray); font-style: italic; }
@@ -749,20 +751,168 @@ def cap5_valuation(c: dict) -> str:
     return "".join(h)
 
 
+def _linha_tab(rot: str, vals: list[str], cls: str = "", destaque: int | None = None) -> str:
+    return (f"<tr class='{cls}'><td>{rot}</td>"
+            + "".join(f"<td class='n{' col' if i == destaque else ''}'>{x}</td>" for i, x in enumerate(vals)) + "</tr>")
+
+
 def cap6_transacao(c: dict) -> str:
     t, v = c["textos"], c["valuation"]
-    h = ['<section class="capitulo">', _cab(6, "Estrutura da transação", c), _p(t["estrutura_transacao"])]
+    tr = (c.get("financeiro") or {}).get("transacao") or {}
+    h = ['<section class="capitulo">', _cab(6, "Ida a mercado", c)]
+    leitura = _p(t["estrutura_transacao"])
     if c.get("leitura_finalidade"):
-        h.append(_ul([x.replace("**", "") for x in c["leitura_finalidade"][1:]]))
-    if v.get("ponte_dono"):
-        h += ['<h3 class="sec">O que sobra para o dono</h3>', f'<div>{g.cascata([tuple(x) for x in v["ponte_dono"]])}</div>']
-        if v.get("retencao_sugerida"):
-            h.append(f'<div class="aviso">Retenção sugerida no fechamento: <b>{brl(v["retencao_sugerida"])}</b>.</div>')
-    h += ['<h3 class="sec">Próximos passos</h3>', _ul(t["proximos_passos"]),
-          '<div class="disclaimer">Relatório preparado pela Nova Direção com base em documentos e informações fornecidos '
+        leitura += _ul([x.replace("**", "") for x in c["leitura_finalidade"][1:]])
+    h.append(_quadro("Leitura da transação", "valor", leitura, "destaque"))
+
+    cen = tr.get("cenarios") or []
+    merc = next((x for x in cen if x["chave"] == "mercado"), None)
+    me = tr.get("metodos") or {}
+    # valor de ida a mercado × métodos  |  cenários de ida a mercado
+    if merc:
+        itens = [("Ida a mercado", merc["bruto"], "preço + dívida assumida", True)]
+        if me.get("dcf") is not None:
+            itens.append(("Fluxo de caixa (DCF)", me["dcf"], "base, sem margem" + (" · vale" if me["vale"] == "DCF" else ""), False))
+        if me.get("patrimonio") is not None:
+            itens.append(("Patrimônio", me["patrimonio"], "ativos a mercado" + (" · vale" if me["vale"] == "Patrimônio" else ""), False))
+        if me.get("estoque"):
+            itens.append(("Estoque" + ("*" if "DEFIS" in (me.get("estoque_fonte") or "") else ""), me["estoque"],
+                          f"a {me['haircut_estoque']:.0%} do valor contábil", False))
+        nota_m = ("Valores brutos, antes de dívida e comissão. Conta o maior entre o fluxo de caixa e o patrimônio, "
+                  "nunca a soma: o caixa da empresa só existe porque o estoque e os ativos estão operando. "
+                  "O valor de ida a mercado é o preço recomendado (com margem de segurança) mais a dívida que o "
+                  "comprador assume.")
+        if me.get("estoque") and "DEFIS" in (me.get("estoque_fonte") or ""):
+            nota_m += f" *Estoque da {me['estoque_fonte']} (o balanço não traz)."
+        bloco_m = g.barras_valor(itens) + f'<div class="nota">{escape(nota_m)}</div>'
+        bloco_c = g.barras_valor([(x["nome"], x["bruto"], x["obs"].split(" · ")[0], x["chave"] == "mercado") for x in cen]) + (
+            '<div class="nota">Valor bruto de ida a mercado em cada cenário. Mínimo = venda forçada em 0 a 6 meses (cenário '
+            'conservador); a mercado = preço recomendado, em 6 a 18 meses; máximo = cenário otimista, para um '
+            'comprador estratégico.</div>')
+        h += ['<div class="duas">', _secao("Valor de ida a mercado × métodos", "faixa", bloco_m),
+              _secao("Cenários de ida a mercado", "valor", bloco_c), '</div>']
+
+        # quanto sobra para o dono
+        dm = [i for i, x in enumerate(cen) if x["chave"] == "mercado"][0]
+        cols = "".join(f"<th class='n'>{escape(x['nome'])}</th>" for x in cen)
+        rot_div = "(−) Dívida bancária" if cen[0]["divida_bruta"] else "(−) Dívida bancária, líquida do caixa"
+        linhas = [_linha_tab("Valor de ida a mercado (bruto)", [_mil(x["bruto"]) for x in cen], "sub", dm),
+                  _linha_tab(rot_div, [_mil(-x["divida"]) for x in cen], "", dm)]
+        if any(x["passivos"] for x in cen):
+            linhas.append(_linha_tab("(−) Fornecedores e obrigações", [_mil(-x["passivos"]) for x in cen], "", dm))
+        linhas.append(_linha_tab("(−) Contingências prováveis (jurídico)",
+                                 [_mil(-x["provaveis"]) if x["provaveis"] else "—" for x in cen], "", dm))
+        linhas.append(_linha_tab("= Valor das cotas (pago ao sócio)", [_mil(x["preco_cotas"]) for x in cen], "sub", dm))
+        linhas.append(_linha_tab("(−) Comissão ND", [_mil(-x["comissao"]) + f" <small>({x['comissao'] / x['bruto'] * 100:.0f}%)</small>"
+                                                   if x["bruto"] else "—" for x in cen], "", dm))
+        linhas.append(_linha_tab("(−) IR sobre o ganho de capital" + ("" if cen[0]["custo_informado"] else "*"),
+                                 [_mil(-x["ir"]) for x in cen], "", dm))
+        linhas.append(_linha_tab("= Sobra para o dono", [f"<b>{_mil(x['sobra'])}</b>" for x in cen], "total", dm))
+        linhas.append(_linha_tab("Sobra sobre o valor bruto", [_pct1(x["sobra"] / x["bruto"] * 100) if x["bruto"] else ND
+                                                               for x in cen], "margem", dm))
+        if any(x["retencao"] for x in cen):
+            linhas.append(_linha_tab("(dos quais retidos em escrow)", [_mil(x["retencao"]) for x in cen], "margem", dm))
+        pc = tr.get("parametros") or {}
+        nota_s = (f"R$ mil. Comissão ND = maior entre {pc.get('comissao_percentual', 0.1):.0%} e "
+                  f"{g.brl_compacto(pc.get('comissao_minima', 150000))} do valor bruto de ida a mercado, paga na entrada. "
+                  "IR do sócio pessoa física sobre o ganho de capital, com alíquotas de 15% a 22,5%.")
+        if not cen[0]["custo_informado"]:
+            nota_s += (" *Custo de aquisição das cotas não informado: considerado zero, então o IR real tende a "
+                       "ser menor (pedir a declaração de IR do sócio).")
+        if any(x["passivos"] for x in cen):
+            nota_s += " Fornecedores saem porque o preço parte dos ativos; quando parte do fluxo, já estão na operação."
+        aviso = ""
+        pesados = [x for x in cen if x["preco_cotas"] <= 0 or x["comissao"] / x["preco_cotas"] > 0.3]
+        if pesados:
+            x = pesados[-1]
+            aviso = (f"No cenário {x['nome'].lower()}, a comissão mínima de {g.brl_compacto(x['comissao'])} "
+                     + ("é maior que o valor das cotas" if x["sobra"] < 0 or x["preco_cotas"] <= 0
+                        else f"consome {x['comissao'] / x['preco_cotas']:.0%} do valor das cotas")
+                     + ": avaliar com o sócio se a ida a mercado compensa, ou outra forma de remuneração da ND.")
+            aviso = f'<div class="aviso">{escape(aviso)}</div>'
+        h.append(_secao("Quanto sobra para o dono", "divida",
+                        f'<table class="compacta"><tr><th>R$ mil</th>{cols}</tr>{"".join(linhas)}</table>'
+                        f'<div class="nota">{escape(nota_s)}</div>' + aviso))
+
+    # estrutura de pagamento
+    pg = tr.get("pagamento")
+    if pg:
+        es = pg["estruturas"]
+        sug = es[-1]
+        cab = "".join(f"<th class='n'>{escape(x['nome'])}<br><small>{escape(x['rotulo'])}</small></th>" for x in es)
+        cab = cab.replace("<th class='n'>Sugerida", "<th class='n col'>Sugerida")
+        ds = len(es) - 1
+
+        def parc(x):
+            return f"{x['n']}× {_mil(x['parcela'])}" if x["n"] else "—"
+
+        linhas = [
+            _linha_tab("Entrada", [f"{_mil(x['entrada'])} <small>({x['entrada_pct']:.0%})</small>" for x in es], "", ds),
+            _linha_tab("Parcelas mensais (corrigidas pelo CDI)", [parc(x) for x in es], "", ds),
+            _linha_tab("Earn-out (se o lucro se confirmar)", [f"até {_mil(x['earnout'])}" if x["earnout"] else "—" for x in es], "", ds),
+            _linha_tab("Escrow (contingências possíveis)", [_mil(x["escrow"]) if x["escrow"] else "—" for x in es], "", ds),
+            "<tr class='sub'><td colspan='4'>Sócio</td></tr>",
+            _linha_tab("Recebe no fechamento (após comissão e escrow)", [_mil(x["no_fechamento"]) for x in es], "", ds),
+            _linha_tab("Valor presente pela Selic (sem earn-out)", [_mil(x["vp_socio"]) for x in es], "", ds),
+            _linha_tab("Total possível no prazo", [_mil(x["total"]) for x in es], "", ds),
+            "<tr class='sub'><td colspan='4'>Investidor</td></tr>",
+            _linha_tab("Desembolso no fechamento (entrada + dívida assumida)", [_mil(x["desembolso"]) for x in es], "", ds),
+            _linha_tab("Parcela ÷ caixa mensal da empresa", [_pct1(x["parcela_caixa"] * 100) if x["parcela_caixa"] else "—"
+                                                           for x in es], "", ds),
+            _linha_tab("Retorno a.a. no cenário base (TIR)", [pct(x["tir"]) if x["tir"] is not None else ND for x in es],
+                       "total", ds)]
+        nota_p = (f"R$ mil. Premissa: {pg['origem']} ({pg['entrada_aceita']:.0%} de entrada e {pg['prazo']} parcelas). "
+                  f"Sugerida = menor entrada, a partir da premissa, com parcela até {pg['limite']:.0%} do caixa mensal "
+                  f"projetado ({g.brl_compacto(pg['caixa_mes'])}): a empresa paga a própria compra com folga. Parcelas "
+                  "corrigidas pelo CDI, então o valor presente para o sócio é o mesmo do preço à vista.")
+        if sug["earnout"]:
+            nota_p += (f" Earn-out até {g.brl_compacto(sug['earnout'])}: a diferença entre o valor sem margem de "
+                       "segurança e o preço; o investidor só paga se o caixa vier acima do cenário base, e paga com esse "
+                       "excedente (por isso a TIR não muda).")
+        if es[1]["falta_na_entrada"]:
+            nota_p += (f" Com {pg['entrada_aceita']:.0%} de entrada, a comissão e o escrow passam da entrada em "
+                       f"{g.brl_compacto(es[1]['falta_na_entrada'])}: o restante sai das primeiras parcelas; a "
+                       "sugerida já sobe a entrada para cobrir os dois.")
+        if sug["parcela_caixa"] and pg["entrada_aceita"] < sug["entrada_pct"]:
+            nota_p += (f" Com {pg['entrada_aceita']:.0%} de entrada a parcela tomaria "
+                       f"{_pct1(es[1]['parcela_caixa'] * 100)} do caixa mensal: acima do limite.")
+        h.append(_secao("Estrutura de pagamento sugerida", "relogio",
+                        f'<table class="compacta pagamento"><tr><th></th>{cab}</tr>{"".join(linhas)}</table>'
+                        f'<div class="nota">{escape(nota_p)}</div>'))
+        # fluxograma da estrutura sugerida
+        etapas = [("Fechamento", g.brl_compacto(sug["entrada"]),
+                   f"entrada de {sug['entrada_pct']:.0%}; a comissão ND ({g.brl_compacto(sug['comissao'])}) sai daqui", True)]
+        if sug["escrow"]:
+            etapas.append(("Escrow", g.brl_compacto(sug["escrow"]),
+                           "em conta vinculada; liberado ao sócio quando as contingências possíveis prescreverem", False))
+        else:
+            etapas.append(("Garantias", "Cotas em garantia",
+                           "cotas alienadas ao sócio até a última parcela (sem contingência que peça escrow)",
+                           False))
+        if sug["n"]:
+            etapas.append(("Parcelas", f"{sug['n']}× {g.brl_compacto(sug['parcela'])}",
+                           f"corrigidas pelo CDI, pagas com o caixa da empresa ({_pct1(sug['parcela_caixa'] * 100)} do "
+                           "caixa mensal)" if sug["parcela_caixa"] else "corrigidas pelo CDI", False))
+        if sug["earnout"]:
+            meta = pg.get("earnout_meta")
+            det = (f"no mês 24, proporcional ao caixa anual entre {g.brl_compacto(pg['earnout_base'])} e "
+                   f"{g.brl_compacto(meta)}" if meta else "no mês 24, se o caixa superar o cenário base")
+            etapas.append(("Earn-out", f"até {g.brl_compacto(sug['earnout'])}", det, False))
+        crono = (g.cronograma_pagamento(sug["n"], sug["parcela"], pg["caixa_mes"], pg["limite"], sug["entrada"])
+                 if sug["n"] else "")
+        h.append(_secao("Como a operação fecha (estrutura sugerida)", "calendario", g.fluxograma(etapas)))
+        if crono:
+            h.append('<div class="duas"><div><div class="legenda-graf">Parcela mensal (laranja) contra o caixa '
+                     'mensal projetado (cinza)</div>' + crono + '</div><div>'
+                     + _secao("Próximos passos", "positivo", _ul(t["proximos_passos"])) + '</div></div>')
+        else:
+            h.append(_secao("Próximos passos", "positivo", _ul(t["proximos_passos"])))
+    else:
+        h.append(_secao("Próximos passos", "positivo", _ul(t["proximos_passos"])))
+    h += ['<div class="disclaimer">Relatório preparado pela Nova Direção com base em documentos e informações fornecidos '
           'pela empresa e por seus sócios, não auditados. Os valores são estimativas para orientar a negociação e não '
-          'constituem garantia de preço. Informações declaradas e não comprovadas dependem de diligência. '
-          'Documento confidencial.</div>', '</section>']
+          'constituem garantia de preço. A estrutura de pagamento é uma simulação, não uma oferta; o IR do sócio é '
+          'estimativa e deve ser confirmado com o contador. Documento confidencial.</div>', '</section>']
     return "".join(h)
 
 

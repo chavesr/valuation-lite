@@ -95,5 +95,15 @@
     "contas_receber": 0.95,
     "estoques": 0.9,
     "imobilizado": 1.0
+  },
+  "transacao": {
+    "origem": "validado 09/11/2026 (Guilherme): comissão ND = maior entre 10% e R$ 150 mil do valor bruto de ida a mercado, paga inteira na entrada; premissa de pagamento = 25% de entrada + 24 parcelas mensais corrigidas pelo CDI; earn-out até o valor sem margem de segurança; escrow = contingências possíveis",
+    "comissao_percentual": 0.10,
+    "comissao_minima": 150000,
+    "entrada_padrao": 0.25,
+    "prazo_padrao_meses": 24,
+    "parcela_max_caixa": 0.70,
+    "ir_ganho_capital": [[5000000, 0.15], [10000000, 0.175], [30000000, 0.20], [null, 0.225]],
+    "_nota": "parcela_max_caixa: parcela mensal até 70% do caixa mensal projetado (a empresa paga a própria compra com folga); IR = alíquotas progressivas da Lei 13.259/2016"
   }
 }

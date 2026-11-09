@@ -69,7 +69,7 @@ def test_gera_html_com_os_seis_capitulos_e_reaproveita_textos(tmp_path):
     r = gerar_relatorio(pasta, executor=redator, pdf=False)
     html = r["html"].read_text(encoding="utf-8")
     for cap in ("Visão geral", "Sobre a empresa", "Análise de mercado e setor",
-                "Análise financeira e riscos do negócio", "Valuation", "Estrutura da transação"):
+                "Análise financeira e riscos do negócio", "Valuation", "Ida a mercado"):
         assert cap in html
     assert "Quanto vale" in html and "<svg" in html and "Marca regional consolidada." in html
     assert r["numeros_nao_conferidos"] == ["R$ 9.999.999"]  # número que não está no material

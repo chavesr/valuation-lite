@@ -764,3 +764,58 @@ def football_field(faixas: list[tuple[str, float, float, str]], marcadores: list
         c.append(f'<text x="{x(v) + dx:.1f}" y="{topo - 14 - (j % 2) * 12}" font-size="9.5" font-weight="{700 if dest else 400}" '
                  f'fill="{TINTA}" text-anchor="{ancora}">{escape(rot)} · {escape(brl_compacto(v))}</text>')
     return _svg(L, A, "".join(c), "Faixas de valor por método (valor para o sócio)")
+
+
+# --------------------------------------------------------------------------- capítulo 6 (ida a mercado)
+
+
+def fluxograma(etapas: list[tuple[str, str, str, bool]]) -> str:
+    """Etapas da operação em caixas ligadas por setas: (título, valor, detalhe, destaque). Destaque com borda laranja."""
+    n = max(len(etapas), 1)
+    L, A, gap = 660, 100, 18
+    w = (L - gap * (n - 1)) / n
+    c = []
+    for i, (tit, val, det, dest) in enumerate(etapas):
+        x0 = i * (w + gap)
+        c.append(f'<rect x="{x0 + 0.5:.1f}" y="4.5" width="{w - 1:.1f}" height="{A - 9}" rx="5" fill="#F5F5F5" '
+                 f'stroke="{LARANJA if dest else LINHA}" stroke-width="{1.6 if dest else 1}"/>')
+        c.append(f'<text x="{x0 + 9:.1f}" y="21" font-size="8" fill="{MUTED}" font-weight="700">'
+                 f'{escape(f"{i + 1}. {tit}".upper())}</text>')
+        c.append(f'<text x="{x0 + 9:.1f}" y="40" font-size="12" fill="{TINTA}" font-weight="700">{escape(val)}</text>')
+        for j, linha in enumerate(_quebrar(det, int(w / 4.4))[:4]):
+            c.append(f'<text x="{x0 + 9:.1f}" y="{55 + j * 10.5}" font-size="7.8" fill="{TINTA_SUAVE}">{escape(linha)}</text>')
+        if i < n - 1:
+            xa = x0 + w + 3
+            c.append(f'<path d="M{xa:.1f},{A / 2} L{xa + gap - 7:.1f},{A / 2}" stroke="{NEUTRO}" stroke-width="1.2"/>'
+                     f'<path d="M{xa + gap - 7:.1f},{A / 2 - 3.5} L{xa + gap - 2:.1f},{A / 2} L{xa + gap - 7:.1f},{A / 2 + 3.5} Z" '
+                     f'fill="{NEUTRO}"/>')
+    return _svg(L, A, "".join(c), "Estrutura da operação")
+
+
+def cronograma_pagamento(meses: int, parcela: float, caixa_mes: float, limite: float, entrada: float) -> str:
+    """Parcela mensal (laranja) contra o caixa mensal projetado (cinza) e o limite de folga (tracejado)."""
+    L, A, esq, dir_, topo, base = 330, 128, 40, 8, 14, 104
+    n = max(meses, 1)
+    vmax = max(caixa_mes, parcela, 1.0) * 1.15
+    y = lambda v: base - v / vmax * (base - topo)  # noqa: E731
+    passo = (L - esq - dir_) / n
+    c = [f'<line x1="{esq}" x2="{L - dir_}" y1="{base}" y2="{base}" stroke="{LINHA}"/>']
+    for t in _ticks(0, vmax, 3):
+        if 0 < t <= vmax:
+            c.append(f'<text x="{esq - 4}" y="{y(t) + 3:.1f}" font-size="7.5" fill="{MUTED}" text-anchor="end">'
+                     f'{escape(_curto(t))}</text>')
+    for m in range(n):
+        x0 = esq + m * passo
+        c.append(f'<rect x="{x0 + passo * 0.15:.1f}" y="{y(caixa_mes):.1f}" width="{passo * 0.7:.1f}" '
+                 f'height="{base - y(caixa_mes):.1f}" fill="#E3E3E3"/>')
+        c.append(f'<rect x="{x0 + passo * 0.15:.1f}" y="{y(parcela):.1f}" width="{passo * 0.7:.1f}" '
+                 f'height="{base - y(parcela):.1f}" fill="{LARANJA}"/>')
+        if (m + 1) % 6 == 0 or m == 0:
+            c.append(f'<text x="{x0 + passo / 2:.1f}" y="{base + 11}" font-size="7.5" fill="{MUTED}" text-anchor="middle">'
+                     f'{m + 1}</text>')
+    yl = y(limite * caixa_mes)
+    c.append(f'<line x1="{esq}" x2="{L - dir_}" y1="{yl:.1f}" y2="{yl:.1f}" stroke="{TINTA}" stroke-dasharray="3 2"/>'
+             f'<text x="{L - dir_}" y="{yl - 3:.1f}" font-size="7.5" fill="{TINTA}" text-anchor="end">'
+             f'limite: {limite:.0%} do caixa</text>')
+    c.append(f'<text x="{esq}" y="{base + 22}" font-size="7.5" fill="{MUTED}">mês</text>')
+    return _svg(L, A, "".join(c), "Parcela mensal contra o caixa da empresa")

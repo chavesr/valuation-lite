@@ -18,6 +18,7 @@ from engine.finalidade import ler_finalidade
 from julgamento.esquemas import TextosRelatorio
 from julgamento.executor import ErroJulgamento, executar_claude_code, extrair_json
 from relatorio import financeiro as calc_fin
+from relatorio import transacao as calc_tr
 from relatorio.render import html_para_pdf, montar_html
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
@@ -261,6 +262,7 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                   "linhas_receita": calc_fin.linhas_receita_planilha(dados) or calc_fin.linhas_receita_f5(qual),
                   "operacional": calc_fin.operacional_planilha(dados) or calc_fin.operacional_f5(qual),
                   "leituras": calc_fin.leituras_verticais(qual),
+                  "transacao": calc_tr.montar(dados, v, fin, _param_valuation(), dres),
                   "projecao": calc_fin.projecao_dre(dres, v, hoje.year)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
@@ -297,3 +299,8 @@ def gerar_relatorio(pasta_empresa: str | Path, modo: str = "claude-code", modelo
                      + (f"; {len(fora)} valor(es) citado(s) não conferido(s)" if fora else ""))
     (saida / "state.json").write_text(estado.model_dump_json(indent=2), encoding="utf-8")
     return out
+
+
+def _param_valuation() -> dict:
+    from engine.valuation import carregar_parametros as _cp
+    return _cp()
