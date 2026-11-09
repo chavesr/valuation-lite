@@ -318,7 +318,7 @@ def cap3_mercado(c: dict) -> str:
     conc = q.get("concorrentes") or []
     if conc:
         h.append(_secao("Concorrentes", "pessoas",
-                        '<table><tr><th>Concorrente</th><th>Perfil</th><th>Como a empresa se compara</th></tr>'
+                        '<table class="compacta"><tr><th>Concorrente</th><th>Perfil</th><th>Como a empresa se compara</th></tr>'
                         + "".join(f"<tr><td>{escape(k['nome'])}</td><td>{escape(k.get('perfil', ''))}</td>"
                                   f"<td>{escape(k.get('comparacao', ''))}</td></tr>" for k in conc) + '</table>'))
     h.append('</section>')
@@ -461,9 +461,14 @@ def cap4_financeiro(c: dict) -> str:
                         + g.barras_percentual([(x["item"], x["percentual"]) for x in mix]))
     else:
         bloco_linhas = _nd_nota("a receita de cada linha de produto ou serviço nos últimos 3 anos.")
-    h += ['<div class="duas">', _secao("Análise de receita", "receita", bloco_ano),
-          _secao("Linhas de receita", "faixa", bloco_linhas), '</div>',
-          _secao("Sazonalidade", "calendario", bloco_mes)]
+    if not m and not linhas_rec and not mix:  # os dois sem dado: a nota da sazonalidade vai na coluna da direita
+        h += ['<div class="duas">', _secao("Análise de receita", "receita", bloco_ano),
+              '<div>' + _secao("Linhas de receita", "faixa", bloco_linhas)
+              + _secao("Sazonalidade", "calendario", bloco_mes) + '</div>', '</div>']
+    else:
+        h += ['<div class="duas">', _secao("Análise de receita", "receita", bloco_ano),
+              _secao("Linhas de receita", "faixa", bloco_linhas), '</div>',
+              _secao("Sazonalidade", "calendario", bloco_mes)]
 
     # custos
     cu, dre = f.get("custos"), f["dre"]
@@ -859,7 +864,8 @@ def cap6_transacao(c: dict) -> str:
         linhas = [
             _linha_tab("Entrada", [f"{_mil(x['entrada'])} <small>({x['entrada_pct']:.0%})</small>" for x in es], "", ds),
             _linha_tab("Parcelas mensais (corrigidas pelo CDI)", [parc(x) for x in es], "", ds),
-            _linha_tab("Escrow (contingências possíveis)", [_mil(x["escrow"]) if x["escrow"] else "—" for x in es], "", ds),
+        ] + ([_linha_tab("Escrow (contingências possíveis)", [_mil(x["escrow"]) for x in es], "", ds)]
+             if any(x["escrow"] for x in es) else []) + [
             "<tr class='sub'><td colspan='4'>Sócio</td></tr>",
             _linha_tab("Na assinatura (entrada − comissão − escrow)", [_mil(x["no_fechamento"]) for x in es], "", ds),
             _linha_tab("+ Nas parcelas, em valor de hoje", [_mil(x["parcelas_hoje"]) if x["n"] else "—" for x in es], "", ds),
@@ -877,13 +883,11 @@ def cap6_transacao(c: dict) -> str:
                        "total", ds)]
         nota_p = (f"R$ mil. Premissa: {pg['origem']} ({pg['entrada_aceita']:.0%} de entrada e {pg['prazo']} parcelas). "
                   f"Sugerida = menor entrada, a partir da premissa, com parcela até {pg['limite']:.0%} do caixa mensal "
-                  f"projetado ({g.brl_compacto(pg['caixa_mes'])}): a empresa paga a própria compra com folga. Parcelas "
-                  "corrigidas pelo CDI: o sócio recebe menos na assinatura, mas o resto chega corrigido, e em valor de hoje o total é o "
-                  "mesmo do preço à vista (a negociação não muda, muda só quando o dinheiro chega).")
+                  f"projetado ({g.brl_compacto(pg['caixa_mes'])}). Em valor de hoje o sócio recebe o mesmo nas três: "
+                  "a negociação não muda, muda só quando o dinheiro chega.")
         if sug["earnout"]:
-            nota_p += (f" Earn-out até {g.brl_compacto(sug['earnout'])}: a diferença entre o valor sem margem de "
-                       "segurança e o preço; o investidor só paga se o caixa vier acima do cenário base, e paga com esse "
-                       "excedente (por isso a TIR não muda).")
+            nota_p += (" O earn-out vai até o valor sem margem de segurança e não muda a TIR: só é pago com o caixa "
+                       "acima do cenário base.")
         if es[1]["falta_na_entrada"]:
             nota_p += (f" Com {pg['entrada_aceita']:.0%} de entrada, a comissão e o escrow passam da entrada em "
                        f"{g.brl_compacto(es[1]['falta_na_entrada'])}: o restante sai das primeiras parcelas; a "
@@ -919,6 +923,19 @@ def cap6_transacao(c: dict) -> str:
                           "vinculada, que nenhum dos dois pode movimentar sozinho. Se os riscos mapeados (dívidas "
                           "fiscais ou trabalhistas antigas) não aparecerem até prescrever, o dinheiro é liberado ao "
                           "sócio; se aparecerem, ele paga a conta.")
+        # sem contingência possível quantificada, mas com risco citado: escrow como recomendação qualitativa
+        fin_c = c.get("financeiro") or {}
+        nota_cont = next((x["nota"] for x in fin_c.get("verticais") or [] if x["vertical"] == "Contingências"), None)
+        leit_cont = ((fin_c.get("leituras") or {}).get("Contingências") or {}).get("leitura")
+        escrow_quali = not sug["escrow"] and nota_cont is not None and nota_cont < 4
+        if escrow_quali:
+            passos.append("<b>Reserva de riscos (escrow), recomendada:</b> "
+                          + (f"há riscos citados ainda sem valor estimado ({escape(leit_cont[:1].lower() + leit_cont[1:].rstrip('.'))}). "
+                             if leit_cont
+                             else "há riscos citados ainda sem valor estimado. ")
+                          + "Recomendamos reservar parte do preço numa conta escrow, uma conta bancária vinculada que "
+                          "nenhum dos dois movimenta sozinho, com o valor definido na diligência. Se os riscos não se "
+                          "confirmarem, o dinheiro é liberado ao sócio.")
         if sug["earnout"]:
             meta = pg.get("earnout_meta")
             passos.append(
@@ -940,6 +957,8 @@ def cap6_transacao(c: dict) -> str:
                            False))
         if sug["escrow"]:
             etapas.append(("Reserva de riscos", bc(sug["escrow"]), "liberada ao sócio se os riscos não aparecerem", False))
+        elif escrow_quali:
+            etapas.append(("Reserva de riscos", "a definir", "escrow com valor fixado na diligência", False))
         if sug["earnout"]:
             etapas.append(("Mês 24 · bônus", f"até {bc(sug['earnout'])}", "só se o lucro se confirmar", False))
         h.append(_secao("Como a operação fecha, passo a passo", "calendario", texto + g.fluxograma(etapas)))

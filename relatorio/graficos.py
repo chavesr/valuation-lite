@@ -611,7 +611,7 @@ def cascata_ponte(itens: list[tuple[str, float]]) -> str:
     """Ponte vertical do EBITDA contábil ao econômico: totais em grafite (o final em laranja), acréscimos em cinza
     claro, reduções em cinza escuro; conectores finos entre as barras e valor sobre cada uma."""
     n = len(itens)
-    L, A, esq, dir_, topo, base = 660, 150, 10, 10, 20, 108
+    L, A, esq, dir_, topo, base = 660, 124, 10, 10, 16, 86
     acum, barras = 0.0, []
     for i, (rot, v) in enumerate(itens):
         total = i == 0 or rot.startswith("=")
@@ -796,7 +796,7 @@ def fluxograma(etapas: list[tuple[str, str, str, bool]]) -> str:
 
 def cronograma_pagamento(meses: int, parcela: float, caixa_mes: float, limite: float, entrada: float) -> str:
     """Parcela mensal (laranja) contra o caixa mensal projetado (cinza) e o limite de folga (tracejado)."""
-    L, A, esq, dir_, topo, base = 330, 128, 40, 8, 14, 104
+    L, A, esq, dir_, topo, base = 330, 110, 40, 8, 14, 86
     n = max(meses, 1)
     vmax = max(caixa_mes, parcela, 1.0) * 1.15
     y = lambda v: base - v / vmax * (base - topo)  # noqa: E731
