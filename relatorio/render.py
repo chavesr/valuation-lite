@@ -151,7 +151,10 @@ def _evolucao_inv(c: dict) -> dict | None:
     base_c = next((x for x in v["cenarios"] if x["nome"] == "base"), None)
     if not (base_c and base_c["fluxos"] and desembolso > 0 and v["fluxo_base"] > 0):
         return None
-    ev = evolucao(desembolso, base_c["fluxos"], base_c["valor_terminal"], v["risco"]["taxa_desconto"], c["ano"],
+    terminal = base_c["valor_terminal"]
+    if v.get("patrimonio_mercado") is not None:  # o comprador continua dono dos ativos: o fim nunca vale menos que eles
+        terminal = max(terminal, v["patrimonio_mercado"] + descontos)
+    ev = evolucao(desembolso, base_c["fluxos"], terminal, v["risco"]["taxa_desconto"], c["ano"],
                   c.get("focus_selic") or {}, c.get("focus_ipca") or {}, c.get("juro_real", 0.06))
     n = len(ev["anos"]) - 1
     ev["ret_selic"] = (ev["selic"][-1] / ev["selic"][0]) ** (1 / n) - 1
@@ -741,7 +744,7 @@ def cap5_valuation(c: dict) -> str:
         tab_ev = ('<table class="compacta"><tr><th>R$ mil</th><th class="n">Empresa</th><th class="n">Selic</th>'
                   f'<th class="n">IPCA+</th></tr>{linhas_ev}</table>')
         nota_ev = (f"Desembolso do comprador: {g.brl_compacto(ev['desembolso'])} (preço recomendado + dívida assumida). "
-                   "Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF; o retorno da "
+                   "Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF (ou os ativos a mercado, se valerem mais); o retorno da "
                    "empresa é a TIR do negócio. A renda fixa é garantida, o caixa da empresa não: a diferença é o "
                    f"prêmio pelo risco. IPCA+ com juro real de {pct(c.get('juro_real', 0.06))} a.a.; Selic e IPCA "
                    "esperados pela Focus/BCB. Entre parênteses, o ganho acumulado.")

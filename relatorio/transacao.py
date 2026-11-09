@@ -173,6 +173,8 @@ def pagamento(v: dict, fin, p: dict, cen_mercado: dict | None, recente: float | 
     teto = max(base["valor_patrimonio"], preco)
     earnout = max(teto - preco, 0.0) if aceita_eo is not False and fluxos else 0.0
     terminal = base["valor_terminal"]
+    if v.get("patrimonio_mercado") is not None:  # o comprador continua dono dos ativos: o fim nunca vale menos que eles
+        terminal = max(terminal, v["patrimonio_mercado"] + extra)
     estr = [_estrutura("À vista", preco, 1.0, 0, 0.0, escrow, com, i_m, selic, caixa_mes, extra, fluxos, terminal,
                        "100% no fechamento"),
             _estrutura("Premissa", preco, e0, n0, 0.0, escrow, com, i_m, selic, caixa_mes, extra, fluxos, terminal,
