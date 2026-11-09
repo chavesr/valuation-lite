@@ -91,6 +91,8 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .nota.nd { color: var(--gray); font-style: italic; }
 table.dre tr.sub td { font-weight: 700; }
 table.dre tr.margem td { color: var(--gray); font-style: italic; }
+table.verticais-larga td:nth-child(1) { width: 24%; } table.verticais-larga td:nth-child(2) { width: 6%; }
+table.verticais-larga td:nth-child(3) { width: 42%; } table.verticais-larga td:nth-child(4) { width: 28%; }
 table.compacta td, table.compacta th { padding: .55mm 1.8mm; line-height: 1.25; }
 small { font-size: 6.8pt; color: var(--gray2); }
 .aviso { background: var(--cinza-quadro); padding: 2mm 3mm; margin: 2mm 0; border-radius: 3mm; }
@@ -329,6 +331,10 @@ def _pct1(v: float | None) -> str:
     return ND if v is None else f"{v:.1f}%".replace(".", ",")
 
 
+def _pct_frac(v: float | None) -> str:
+    return ND if v is None else _pct1(v * 100)
+
+
 def _mes(comp: str) -> str:
     meses = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
     a, m = comp.split("-")
@@ -342,13 +348,13 @@ def _bloco_clientes(cl: dict | None) -> str:
     tem_setor = any(r.get("setor") for r in cl["ranking"])
     linhas = "".join(f"<tr><td>{i}</td><td>{escape(r['cliente'])}</td>"
                      + (f"<td>{escape(r.get('setor') or ND)}</td>" if tem_setor else "")
-                     + f"<td class='n'>{_mil(r['valor'])}</td><td class='n'>{_pct1(r['participacao'] * 100)}</td></tr>"
+                     + f"<td class='n'>{_mil(r['valor'])}</td><td class='n'>{_pct_frac(r['participacao'])}</td></tr>"
                      for i, r in enumerate(cl["ranking"][:10], 1))
     ano = f" em {cl['ano']}" if cl.get("ano") else ""
     cards = [(cl.get("rotulo_qtd") or "Clientes", str(cl.get("clientes_pj") or ND), ano.strip() or "no período"),
-             ("Maior cliente", _pct1(cl["maior"] * 100), "da receita"),
-             ("5 maiores", _pct1(cl["top5"] * 100), "da receita"),
-             ("10 maiores", _pct1(cl["top10"] * 100), "da receita")]
+             ("Maior cliente", _pct_frac(cl.get("maior")), "da receita"),
+             ("5 maiores", _pct_frac(cl.get("top5")), "da receita"),
+             ("10 maiores", _pct_frac(cl.get("top10")), "da receita")]
     cards_html = "".join(f'<div class="kpi mini"><div class="rot">{escape(r)}</div><div class="val">{escape(x)}</div>'
                          f'<div class="obs">{escape(o)}</div></div>' for r, x, o in cards)
     tabela = (f'<table class="compacta"><tr><th>#</th><th>Cliente</th>' + ("<th>Setor</th>" if tem_setor else "")
@@ -373,10 +379,10 @@ def _bloco_operacional(op: dict) -> str:
         return (f'<div class="legenda-graf">{escape(serie["nome"])}{un}</div>'
                 + g.colunas_serie(itens, {ult}, titulo=titulo))
 
-    num = lambda v: f"{v:,.0f}".replace(",", ".") if v >= 100 else f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")  # noqa: E731
+    num = lambda v: f"{v:,.0f}".replace(",", ".") if v >= 100 or float(v).is_integer() else f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")  # noqa: E731
     conta = (f'<div class="formula"><b>{escape(op["anos"][-1])}:</b> {num(vol["valores"][-1])} {escape(vol["unidade"])} '
-             f'× {num(pre["valores"][-1])} {escape(pre["unidade"])} = <b>{escape(g.brl_compacto(op["receita"][-1]))}</b> '
-             'de receita</div>')
+             f'× {num(pre["valores"][-1])} {escape(pre["unidade"])}' + (" × 12 meses" if op.get("mensal") else "")
+             + f' = <b>{escape(g.brl_compacto(op["receita"][-1]))}</b> de receita no ano</div>')
     return (f'<div class="duas"><div>{graf(vol, "Volume por ano")}</div><div>{graf(pre, "Preço médio por ano")}</div></div>'
             + conta + f'<div class="nota">Fonte: {escape(op.get("fonte") or ND)}. Volume × preço explica a receita; '
             'diferença para a DRE vem de outras linhas, devoluções e descontos.</div>')
@@ -516,16 +522,34 @@ def cap4_financeiro(c: dict) -> str:
              + "".join(f"<tr><td>{escape(x['vertical'])}{' <small>(proposta)</small>' if x['pendente'] else ''}</td>"
                        f"<td class='n'><b>{ND if x['nota'] is None else str(x['nota']).replace('.0', '').replace('.', ',')}</b></td></tr>"
                        for x in vt) + '</table>')
+    lt = f.get("leituras") or {}
+    # com a leitura por vertical, os riscos do negócio já estão nela: a tabela fica só com as contingências em R$
+    lista = [r for r in c["riscos"] if r.get("contingencia")] if lt else c["riscos"]
     riscos = "".join(f"<tr><td>{escape(r['descricao'])}</td><td>{escape(r['severidade'])}</td>"
-                     f"<td>{escape(r['tratamento'])}</td></tr>" for r in c["riscos"])
-    h += ['<div class="bloco-junto">', _quadro("Mapa de riscos", "alerta", _p(t["leitura_riscos"]), "destaque"),
-          '<div class="duas">', _secao("Risco por vertical", "alerta", g.radar_verticais([(x["vertical"], x["nota"]) for x in vt])),
-          _secao("Notas (5 = mais sólido)", "valor", tab_v
-                 + f'<div class="nota">Score de risco {v["risco"]["score"]:.0f}/100 (0 = menor risco), que define a '
-                   'taxa de desconto. "Proposta" = nota ainda não confirmada pelo analista.</div>'), '</div></div>',
-          _secao("Principais riscos e tratamento", "positivo",
-                 f'<table class="riscos"><tr><th>Risco</th><th>Peso</th><th>Tratamento no valor</th></tr>{riscos}</table>'),
-          '</section>']
+                     f"<td>{escape(r['tratamento'])}</td></tr>" for r in lista)
+    nota_score = (f'<div class="nota">Score de risco {v["risco"]["score"]:.0f}/100 (0 = menor risco), que define a '
+                  'taxa de desconto. "Proposta" = nota ainda não confirmada pelo analista.</div>')
+    radar = _secao("Risco por vertical", "alerta", g.radar_verticais([(x["vertical"], x["nota"]) for x in vt]))
+    if lt:  # F5 escreveu a leitura de cada vertical: tabela larga com nota, leitura e tratamento
+        fmt = lambda n: ND if n is None else str(n).replace(".0", "").replace(".", ",")  # noqa: E731
+        linhas = "".join(
+            f"<tr><td><b>{escape(x['vertical'])}</b>{' <small>(proposta)</small>' if x['pendente'] else ''}</td>"
+            f"<td class='n'><b>{fmt(x['nota'])}</b></td><td>{escape((lt.get(x['vertical']) or {}).get('leitura') or ND)}</td>"
+            f"<td>{escape((lt.get(x['vertical']) or {}).get('tratamento') or ND)}</td></tr>" for x in vt)
+        h += ['<div class="bloco-junto"><div class="duas">', radar,
+              _quadro("Mapa de riscos", "alerta", _p(t["leitura_riscos"]), "destaque"), '</div></div>',
+              _secao("Leitura por vertical (5 = mais sólido)", "valor",
+                     f'<table class="verticais-larga compacta"><tr><th>Vertical</th><th class="n">Nota</th>'
+                     f'<th>Principal ponto</th><th>Tratamento</th></tr>{linhas}</table>' + nota_score)]
+    else:
+        h += ['<div class="bloco-junto">', _quadro("Mapa de riscos", "alerta", _p(t["leitura_riscos"]), "destaque"),
+              '<div class="duas">', radar, _secao("Notas (5 = mais sólido)", "valor", tab_v + nota_score),
+              '</div></div>']
+    if lista:
+        titulo = "Contingências e tratamento no preço" if lt else "Principais riscos e tratamento"
+        h.append(_secao(titulo, "positivo", f'<table class="riscos"><tr><th>Risco</th><th>Peso</th>'
+                        f'<th>Tratamento no valor</th></tr>{riscos}</table>'))
+    h.append('</section>')
     return "".join(h)
 
 

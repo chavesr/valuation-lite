@@ -109,6 +109,58 @@ class PosicaoEmpresa(BaseModel):
     especializacao: int = Field(ge=1, le=5)
 
 
+class ValorAno(BaseModel):
+    ano: int = Field(ge=1990, le=2100)
+    valor: float = Field(ge=0)
+
+
+class Indicador(BaseModel):
+    nome: str = Field(max_length=40, description="ex.: milheiros de etiquetas vendidos; diária média")
+    unidade: str = Field("", max_length=24, description="ex.: milheiros; R$ por milheiro; diárias")
+    valores: list[ValorAno] = Field(min_length=1, max_length=4)
+
+
+class Operacional(BaseModel):
+    """Os dois números que explicam a receita (volume × preço), como declarados — nunca calculados pelo agente."""
+
+    volume: Indicador
+    preco: Indicador
+    preco_mensal: bool = Field(False, description="true se o preço/ticket declarado é por mês (a receita do ano = volume × preço × 12)")
+    fonte: str = Field(max_length=90, description="quem declarou e onde (ex.: dono, entrevista B2 31:40)")
+
+
+class LinhaReceita(BaseModel):
+    nome: str = Field(max_length=40)
+    valores: list[ValorAno] = Field(min_length=1, max_length=4, description="receita da linha em R$ no ano")
+
+
+class ClienteDeclarado(BaseModel):
+    cliente: str = Field(max_length=40, description="nome ou tipo (ex.: 'hospitais da região')")
+    setor: str = Field("", max_length=30)
+    receita_anual: float | None = Field(None, ge=0, description="R$ no ano, como declarado ou anualizado (60 mil/mês → 720 mil)")
+    percentual: float | None = Field(None, ge=0, le=100, description="% da receita, se declarado")
+
+
+class OperacaoAtivos(BaseModel):
+    nota: int = Field(ge=1, le=5, description="5 = operação e ativos sólidos … 1 = frágeis (máquinas, capacidade, imóvel)")
+    justificativa: str = Field(max_length=700)
+    evidencias: list[str] = Field(default_factory=list, max_length=4)
+
+
+VERTICAIS_RISCO = ("Receita e clientes", "Mercado e concorrência", "Diferencial e intangíveis",
+                   "Gestão e dependência do dono", "Governança e informação", "Saúde financeira",
+                   "Operação e ativos físicos", "Contingências")
+VerticalRisco = Literal["Receita e clientes", "Mercado e concorrência", "Diferencial e intangíveis",
+                        "Gestão e dependência do dono", "Governança e informação", "Saúde financeira",
+                        "Operação e ativos físicos", "Contingências"]
+
+
+class LeituraVertical(BaseModel):
+    vertical: VerticalRisco
+    leitura: str = Field(max_length=140, description="o principal ponto da vertical, numa frase")
+    tratamento: str = Field(max_length=110, description="como o risco é tratado: na taxa, no preço, retenção, diligência")
+
+
 class Qualitativo(BaseModel):
     """qualitativo.json — saída da F5 (analista fundamentalista)."""
 
@@ -135,6 +187,12 @@ class Qualitativo(BaseModel):
     cadeia_valor: list[EtapaCadeia] = Field(default_factory=list, max_length=6)
     concorrentes: list[Concorrente] = Field(default_factory=list, max_length=6)
     posicao_empresa: PosicaoEmpresa | None = None
+    # capítulo 4 (usados só quando a planilha da ND não traz o dado)
+    operacional: Operacional | None = None
+    linhas_receita: list[LinhaReceita] = Field(default_factory=list, max_length=6)
+    clientes_principais: list[ClienteDeclarado] = Field(default_factory=list, max_length=10)
+    operacao_ativos: OperacaoAtivos | None = None
+    leitura_verticais: list[LeituraVertical] = Field(default_factory=list, max_length=8)
 
     @field_validator("funcoes_do_dono")
     @classmethod
@@ -142,6 +200,13 @@ class Qualitativo(BaseModel):
         eixos = [f.eixo for f in v]
         if len(eixos) != len(set(eixos)):
             raise ValueError("funcoes_do_dono com eixo repetido")
+        return v
+
+    @field_validator("leitura_verticais")
+    @classmethod
+    def _uma_por_vertical(cls, v: list[LeituraVertical]) -> list[LeituraVertical]:
+        if len({x.vertical for x in v}) != len(v):
+            raise ValueError("leitura_verticais com vertical repetida")
         return v
 
     @field_validator("notas_score")

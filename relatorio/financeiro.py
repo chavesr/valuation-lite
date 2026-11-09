@@ -157,7 +157,8 @@ def receita_mensal(dados, meses: int = 24) -> dict | None:
     if len(serie) < 6:
         return None
     chaves = sorted(serie)[-meses:]
-    return {"meses": chaves, "valores": [serie[k] for k in chaves], "fonte": fonte}
+    nomes = {"PGDAS-D": "declarações do Simples Nacional", "gerencial": FONTE_EMPRESA}
+    return {"meses": chaves, "valores": [serie[k] for k in chaves], "fonte": nomes.get(fonte, "documentos fiscais")}
 
 
 # --------------------------------------------------------------------------- ponte contábil → econômico
@@ -288,6 +289,8 @@ def verticais_risco(v: dict, qual: dict) -> list[dict]:
 # Mesmo formato vale para o F5 (fase seguinte): o relatório não sabe de onde veio, só a "fonte" no rodapé.
 
 VOLUME, PRECO = "Volume (quanto foi vendido)", "Preço médio / ticket"
+# fontes no relatório: curtas, sem aba, arquivo ou minuto de gravação (o detalhe fica nos arquivos do case)
+FONTE_EMPRESA = "informações enviadas pela empresa"
 
 
 def _receita_do_ano(dre: dict, dados, ano: int) -> float | None:
@@ -318,7 +321,7 @@ def clientes_planilha(dados, dre: dict) -> dict | None:
     for l in doano:
         if l.get("setor_do_cliente"):
             setores[l["setor_do_cliente"]] = setores.get(l["setor_do_cliente"], 0.0) + l["faturamento_no_ano_r"]
-    return {"ano": ano, "fonte": "planilha da ND (aba 5_Clientes)", "base_receita": receita is not None,
+    return {"ano": ano, "fonte": FONTE_EMPRESA, "base_receita": receita is not None,
             "clientes_pj": len(doano), "rotulo_qtd": "Clientes listados",
             "maior": part[0], "top5": sum(part[:5]), "top10": sum(part[:10]),
             "ranking": [{"cliente": l["cliente"], "valor": l["faturamento_no_ano_r"], "participacao": x,
@@ -341,7 +344,7 @@ def linhas_receita_planilha(dados) -> dict | None:
             d[int(l["ano"])] = d.get(int(l["ano"]), 0.0) + l["receita_no_ano_r"]
     ordem = sorted(tab, key=lambda n: -tab[n].get(anos[-1], 0.0))
     return {"anos": [str(a) for a in anos], "linhas": [(n, [tab[n].get(a) for a in anos]) for n in ordem],
-            "fonte": "planilha da ND (aba 10_Linhas_Receita)"}
+            "fonte": FONTE_EMPRESA}
 
 
 def operacional_planilha(dados) -> dict | None:
@@ -365,4 +368,64 @@ def operacional_planilha(dados) -> dict | None:
     vol, pre = serie(VOLUME), serie(PRECO)
     return {"anos": [str(a) for a in anos], "volume": vol, "preco": pre,
             "receita": [v * x for v, x in zip(vol["valores"], pre["valores"])],
-            "fonte": "planilha da ND (aba 11_Indicadores)"}
+            "fonte": FONTE_EMPRESA}
+
+
+# --------------------------------------------------------------------------- F5 (declarado), quando a planilha não traz
+FONTE_F5 = "declaração dos sócios"
+
+
+def clientes_f5(qual: dict, dre: dict, dados) -> dict | None:
+    regs = qual.get("clientes_principais") or []
+    if not regs:
+        return None
+    completos = [a["ano"] for a in dre["abertas"] if a["meses"] == 12 and a.get("rb")]
+    ano = max(completos, default=None)
+    receita = _receita_do_ano(dre, dados, ano) if ano else None
+    linhas = []
+    for c in regs:
+        part = (c["percentual"] / 100 if c.get("percentual") is not None
+                else (c["receita_anual"] / receita if receita and c.get("receita_anual") is not None else None))
+        valor = c.get("receita_anual") if c.get("receita_anual") is not None else (part * receita if receita and part is not None else None)
+        linhas.append({"cliente": c["cliente"], "setor": c.get("setor") or None, "valor": valor, "participacao": part})
+    com_valor = sorted((r for r in linhas if r["participacao"] is not None), key=lambda r: -r["participacao"])
+    linhas = com_valor + [r for r in linhas if r["participacao"] is None]  # citados sem valor vão no fim, com n/d
+    soma = lambda n: sum(r["participacao"] for r in com_valor[:n]) if len(com_valor) >= n else None  # noqa: E731
+    setores: dict[str, float] = {}
+    for r in com_valor:
+        if r["setor"]:
+            setores[r["setor"]] = setores.get(r["setor"], 0.0) + r["participacao"] * 100
+    return {"ano": ano, "fonte": FONTE_F5 + (f"; participação sobre a receita de {ano}" if ano else ""),
+            "base_receita": True, "clientes_pj": len(linhas), "rotulo_qtd": "Clientes citados",
+            "maior": com_valor[0]["participacao"] if com_valor else None, "top5": soma(5), "top10": soma(10),
+            "ranking": linhas[:10],
+            "por_setor": sorted(setores.items(), key=lambda x: -x[1])}
+
+
+def linhas_receita_f5(qual: dict) -> dict | None:
+    regs = qual.get("linhas_receita") or []
+    anos = sorted({v["ano"] for l in regs for v in l["valores"]})[-3:]
+    if not anos:
+        return None
+    linhas = [(l["nome"], [next((v["valor"] for v in l["valores"] if v["ano"] == a), None) for a in anos]) for l in regs]
+    linhas.sort(key=lambda x: -(x[1][-1] or 0))
+    return {"anos": [str(a) for a in anos], "linhas": linhas, "fonte": FONTE_F5}
+
+
+def operacional_f5(qual: dict) -> dict | None:
+    op = qual.get("operacional")
+    if not op:
+        return None
+    vol = {v["ano"]: v["valor"] for v in op["volume"]["valores"]}
+    pre = {v["ano"]: v["valor"] for v in op["preco"]["valores"]}
+    anos = sorted(set(vol) & set(pre))[-3:]
+    if not anos:
+        return None
+    serie = lambda ind, d: {"nome": ind["nome"], "unidade": ind.get("unidade") or "", "valores": [d[a] for a in anos]}  # noqa: E731
+    return {"anos": [str(a) for a in anos], "volume": serie(op["volume"], vol), "preco": serie(op["preco"], pre),
+            "receita": [vol[a] * pre[a] * (12 if op.get("preco_mensal") else 1) for a in anos],
+            "mensal": bool(op.get("preco_mensal")), "fonte": FONTE_F5}
+
+
+def leituras_verticais(qual: dict) -> dict[str, dict]:
+    return {x["vertical"]: x for x in qual.get("leitura_verticais") or []}

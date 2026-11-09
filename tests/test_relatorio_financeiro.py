@@ -100,3 +100,42 @@ def test_sem_planilha_nada_quebra():
     d = SimpleNamespace(planilha_nd=None)
     assert f.clientes_planilha(d, {"abertas": []}) is None
     assert f.linhas_receita_planilha(d) is None and f.operacional_planilha(d) is None
+
+
+def test_f5_preenche_quando_a_planilha_nao_traz():
+    qual = {"operacional": {"volume": {"nome": "Milheiros", "unidade": "milheiros",
+                                       "valores": [{"ano": 2024, "valor": 100}, {"ano": 2025, "valor": 120}]},
+                            "preco": {"nome": "Preço", "unidade": "R$", "valores": [{"ano": 2025, "valor": 10}]},
+                            "fonte": "dono, entrevista A"},
+            "linhas_receita": [{"nome": "Serviço", "valores": [{"ano": 2025, "valor": 40}]},
+                               {"nome": "Produto", "valores": [{"ano": 2025, "valor": 200}]}],
+            "clientes_principais": [{"cliente": "A", "setor": "Saúde", "receita_anual": 250_000},
+                                    {"cliente": "B", "percentual": 30}, {"cliente": "C"}],
+            "leitura_verticais": [{"vertical": "Contingências", "leitura": "x", "tratamento": "retenção"}]}
+    op = f.operacional_f5(qual)
+    assert op["anos"] == ["2025"] and op["receita"] == [1200] and op["fonte"] == "declaração dos sócios"
+    assert [n for n, _ in f.linhas_receita_f5(qual)["linhas"]] == ["Produto", "Serviço"]
+    dre = {"abertas": [{"ano": 2025, "meses": 12, "rb": 1_000_000.0}]}
+    cl = f.clientes_f5(qual, dre, SimpleNamespace(planilha_nd=None))
+    assert [r["cliente"] for r in cl["ranking"]] == ["B", "A", "C"]  # C sem valor vai no fim
+    assert cl["maior"] == 0.3 and cl["ranking"][1]["participacao"] == 0.25 and cl["ranking"][0]["valor"] == 300_000
+    assert cl["ranking"][2]["cliente"] == "C" and cl["ranking"][2]["valor"] is None and cl["top5"] is None
+    assert f.leituras_verticais(qual)["Contingências"]["tratamento"] == "retenção"
+    assert f.operacional_f5({}) is None and f.linhas_receita_f5({}) is None and f.clientes_f5({}, dre, None) is None
+    mensal = f.operacional_f5({**qual, "operacional": {**qual["operacional"], "preco_mensal": True}})
+    assert mensal["receita"] == [14_400] and mensal["mensal"]
+
+
+def test_esquema_f5_aceita_saida_antiga_e_recusa_vertical_repetida():
+    import pytest
+    from julgamento.esquemas import Qualitativo
+    base = {"case_id": "x", "playbook": "geral", "resumo": "r", "modelo_negocio": "m",
+            "fosso": {"forca": "estreito", "justificativa": "j"}, "gestao": {"avaliacao": "a"},
+            "notas_score": [{"dimensao": d, "nota": 3, "justificativa": "sem informação", "evidencias": ["e"],
+                             "confianca": "baixa"} for d in ("dependencia_dono", "recorrencia_receita",
+                                                             "contingencias", "setor_posicao_competitiva")]}
+    q = Qualitativo.model_validate(base)  # saída anterior aos campos do capítulo 4
+    assert q.operacional is None and q.leitura_verticais == []
+    dup = [{"vertical": "Contingências", "leitura": "a", "tratamento": "b"}] * 2
+    with pytest.raises(ValueError):
+        Qualitativo.model_validate(base | {"leitura_verticais": dup})

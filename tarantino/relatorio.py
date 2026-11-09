@@ -171,7 +171,7 @@ def _textos(pasta: Path, modo: str, modelo: str | None, executor, forcar: bool) 
 def _clientes_sped(c: dict | None) -> dict | None:
     if not c or not c.get("ranking"):
         return None
-    return c | {"fonte": "notas fiscais (SPED); vendas a pessoa física ficam fora do ranking",
+    return c | {"fonte": "notas fiscais emitidas (vendas a pessoa física ficam fora do ranking)",
                 "rotulo_qtd": "Clientes empresa", "base_receita": True}
 
 
@@ -204,7 +204,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     rot = {"provavel": ("alta", "desconta do preço"), "possivel": ("média", "retenção no fechamento"),
            "remota": ("baixa", "não afeta o preço")}
     riscos = [{"descricao": c["descricao"], "severidade": rot[c["classificacao"]][0],
-               "tratamento": f"{rot[c['classificacao']][1]} (R$ {c['valor_bruto']:,.0f})".replace(",", ".")}
+               "tratamento": f"{rot[c['classificacao']][1]} (R$ {c['valor_bruto']:,.0f})".replace(",", "."),
+               "contingencia": True}
               for c in v.get("contingencias", [])]
     riscos += [{"descricao": r["descricao"], "severidade": r["severidade"], "tratamento": "risco do negócio (na taxa)"}
                for r in (qual.get("riscos") or [])[:6]]
@@ -255,9 +256,11 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                                    if a["meses"] < 12 and a.get("rb")), None),
                   "ponte": calc_fin.ponte_economica(dre_c, dres, v["periodo_base"]),
                   "giro": calc_fin.giro_divida(dados, dre_c, dres, v), "verticais": calc_fin.verticais_risco(v, qual),
-                  "clientes": calc_fin.clientes_planilha(dados, dre_c) or _clientes_sped(dados.concentracao_clientes),
-                  "linhas_receita": calc_fin.linhas_receita_planilha(dados),
-                  "operacional": calc_fin.operacional_planilha(dados)}
+                  "clientes": (calc_fin.clientes_planilha(dados, dre_c) or _clientes_sped(dados.concentracao_clientes)
+                               or calc_fin.clientes_f5(qual, dre_c, dados)),
+                  "linhas_receita": calc_fin.linhas_receita_planilha(dados) or calc_fin.linhas_receita_f5(qual),
+                  "operacional": calc_fin.operacional_planilha(dados) or calc_fin.operacional_f5(qual),
+                  "leituras": calc_fin.leituras_verticais(qual)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
             "qual": qual, "ano": hoje.year, "focus_selic": focus_selic, "focus_ipca": focus_ipca,
