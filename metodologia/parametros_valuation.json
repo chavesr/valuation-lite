@@ -66,8 +66,8 @@
     "max": 5.0
   },
   "margem_de_seguranca": {
-    "origem": "a calibrar: desconto sobre o valor base para o preço recomendado",
-    "percentual": 0.25
+    "origem": "DESATIVADA em 10/11/2026 (opção A): o recomendado é o cenário base; o conservador (+3 p.p. na taxa, crescimento zero, múltiplo 1,5×) e a régua da casa já protegem o comprador. Mantida só como registro.",
+    "percentual": 0.0
   },
   "cenarios_taxa": {
     "conservador": 0.03,
@@ -97,7 +97,7 @@
     "imobilizado": 1.0
   },
   "transacao": {
-    "origem": "validado 09/11/2026 (Guilherme): comissão ND = maior entre 10% e R$ 150 mil do valor bruto de ida a mercado, paga inteira na entrada; premissa de pagamento = 25% de entrada + 24 parcelas mensais corrigidas pelo CDI; earn-out até o valor sem margem de segurança; escrow = contingências possíveis",
+    "origem": "validado 09/11/2026 (Guilherme): comissão ND = maior entre 10% e R$ 150 mil do valor bruto de ida a mercado, paga inteira na entrada; premissa de pagamento = 25% de entrada + 24 parcelas mensais corrigidas pelo CDI; earn-out até o cenário otimista (10/11/2026); escrow = contingências possíveis",
     "comissao_percentual": 0.10,
     "comissao_minima": 150000,
     "entrada_padrao": 0.25,

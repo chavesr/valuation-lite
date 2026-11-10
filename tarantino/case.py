@@ -10,7 +10,7 @@ Lê a pasta da empresa no padrão do Drive sem alterar os originais e grava tudo
     pendencias.md      o que pedir ao cliente e o que levar para a entrevista
 
 Enquanto não há parser de PGDAS/DRE/Balanço, esses dados podem ser digitados em
-`_valuation/entrada_manual.json` (mesmos campos de DadosBrutos: pgdas, dres, balancos).
+`_valuation/entrada_manual.json` (mesmos campos de DadosBrutos: pgdas, fiscal_mensal, dres, balancos).
 """
 
 from __future__ import annotations
@@ -834,6 +834,10 @@ def captar(pasta: Path, inventario: list[Arquivo], fim: str | None = None, meses
     fiscal = [FiscalMes(cnpj=e.cnpj, competencia=e.competencia, receita_bruta=e.vendas,
                         devolucoes=e.devolucoes_venda, fonte="EFD ICMS/IPI", proveniencia=e.proveniencia)
               for e in efds]
+    manuais_fiscal = [FiscalMes.model_validate(f) for f in manual.get("fiscal_mensal", [])]
+    if manuais_fiscal:  # receita mensal digitada (ex.: relatório de faturamento do contador); prevalece sobre a EFD
+        meses_manuais = {(f.cnpj, f.competencia) for f in manuais_fiscal}
+        fiscal = manuais_fiscal + [f for f in fiscal if (f.cnpj, f.competencia) not in meses_manuais]
     concentracao = None
     if efds:
         efds_periodo = [e for e in efds if inicio <= e.competencia <= fim]

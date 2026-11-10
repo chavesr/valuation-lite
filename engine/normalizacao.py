@@ -222,8 +222,13 @@ def periodos(dados) -> list[tuple[str, list[str]]]:
         meses = meses_entre(inicio, fim)
         if sum(1 for x in meses if x in mensal) >= 12:
             saida.append((f"LTM {inicio} a {fim}", meses))
+    # exercícios fechados: DRE (contábil ou gerencial em PDF) de 12 meses, ou planilha gerencial mensal que cubra o
+    # ano inteiro (09/11/2026: case sem DRE, só com o fluxo gerencial do ERP)
+    ger_m = _receita_gerencial_mensal(dados)
+    anos_ger = {int(m[:4]) for m in ger_m if all(f"{m[:4]}-{k:02d}" in ger_m for k in range(1, 13))}
     anos = sorted({d.exercicio for d in dados.dres if d.meses == 12} |
-                  {d.exercicio for d in getattr(dados, "dres_gerenciais", []) if d.meses == 12}, reverse=True)[:2]
+                  {d.exercicio for d in getattr(dados, "dres_gerenciais", []) if d.meses == 12} | anos_ger,
+                  reverse=True)[:2]
     for a in anos:
         saida.append((str(a), meses_entre(f"{a}-01", f"{a}-12")))
     return saida
@@ -233,7 +238,7 @@ def periodos(dados) -> list[tuple[str, list[str]]]:
 
 
 def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: dict) -> DREEconomica:
-    atividade = atividade_principal(dados)
+    atividade = p.get("atividade_case") or atividade_principal(dados)  # premissa do analista prevalece
     fator = 12 / len(meses)
     declarada_m, fonte_decl = _receita_declarada_mensal(dados)
     gerencial_m = _receita_gerencial_mensal(dados)
@@ -444,7 +449,10 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
         d.linhas.append(Linha(conta="IRPJ/CSLL (regime do comprador)", valor=round(-ircs / fator, 2), fonte=regime))
 
     capex, fonte_capex = None, None
-    if q and isinstance(q.valor("Q28"), (int, float)):
+    if isinstance(p.get("capex_manutencao_anual"), (int, float)):  # premissa do analista (parametros_case.json)
+        capex = p["capex_manutencao_anual"] / fator
+        fonte_capex = p.get("capex_fonte") or "premissa do analista (capex de manutenção anual)"
+    elif q and isinstance(q.valor("Q28"), (int, float)):
         capex, fonte_capex = q.valor("Q28") / fator, "questionário Q28 (capex de manutenção informado)"
     elif da:
         capex, fonte_capex = -da, "depreciação da DRE contábil"

@@ -53,7 +53,7 @@ def test_valuation_ponta_a_ponta_com_divida_e_piso():
     assert cons.valor_terminal == pytest.approx(max(1.5 * r.fluxo_base, liquidacao_op), abs=0.01)
     assert cons.valor_patrimonio <= base_c.valor_patrimonio <= otim.valor_patrimonio
     assert base_c.valor_patrimonio == pytest.approx(base_c.valor_empresa - 300_000)  # − dívida líquida
-    assert r.preco_recomendado == pytest.approx(max(base_c.valor_patrimonio * 0.75, 0.0))
+    assert r.preco_recomendado == pytest.approx(max(base_c.valor_patrimonio, 0.0))  # opção A: recomendado = base
     assert any("aguardando o analista" in a for a in r.alertas)
 
 
@@ -134,7 +134,8 @@ def test_d5_patrimonio_a_mercado_e_em_liquidacao():
     assert merc.preco_recomendado >= 110_000 - 0.01  # o piso a mercado vira o mínimo do preço
 
 
-def test_d5_valor_de_oferta_pelos_ativos_brutos_e_ponte_para_o_dono():
+def test_ida_a_mercado_pelo_piso_de_liquidacao_e_ativos_a_mercado_so_referencia():
+    """Decisão de 10/11/2026: ativos a mercado não definem valor; com fluxo fraco vale a liquidação ordenada."""
     import datetime
 
     dados = _dados()
@@ -147,8 +148,12 @@ def test_d5_valor_de_oferta_pelos_ativos_brutos_e_ponte_para_o_dono():
     r = avaliar(dados, dres, None, avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094), notas)
     ativos = 100_000 + 0.95 * 200_000 + 0.9 * 9_000_000 + 100_000  # brutos: sem descontar passivos
     assert r.ativos_mercado == pytest.approx(ativos)
-    assert r.valor_oferta == pytest.approx(ativos) and r.valor_oferta_origem == "ativos a mercado"
-    assert r.ponte_dono[-1] == ("= Sobra para o dono", pytest.approx(ativos - 150_000 - 400_000))
+    liq = 100_000 + 0.8 * 200_000 + 0.5 * 9_000_000 + 0.4 * 100_000  # liquidação ordenada, com o caixa
+    assert r.piso_patrimonial == pytest.approx(liq - 150_000 - 400_000)
+    # base única: parte do sócio + dívida bruta (os fornecedores já saem dentro da liquidação)
+    assert r.valor_oferta == pytest.approx(liq - 150_000) and r.valor_oferta_origem == "liquidação dos ativos (piso)"
+    assert r.ponte_dono[-1] == ("= Sobra para o dono", pytest.approx(liq - 150_000 - 400_000))
+    assert any("argumento do vendedor" in a for a in r.alertas)
 
 
 def test_fluxo_negativo_conservador_e_o_pior_cenario():
@@ -171,8 +176,8 @@ def test_faixa_de_venda_sempre_progressiva():
     assert f["maximo"] == pytest.approx(max(r.cenarios[2].valor_patrimonio, r.preco_recomendado))
 
 
-def test_padrao_considera_o_maior_entre_fluxo_e_patrimonio_a_mercado():
-    """Decisão de 09/11/2026: sem escolha do analista, o preço nunca fica abaixo do patrimônio a mercado."""
+def test_padrao_usa_a_liquidacao_como_piso():
+    """Decisão de 10/11/2026 (substitui a de 09/11): o piso padrão é a liquidação ordenada, não o patrimônio a mercado."""
     import datetime
     dados = _dados()
     dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
@@ -183,5 +188,16 @@ def test_padrao_considera_o_maior_entre_fluxo_e_patrimonio_a_mercado():
     notas = propor_notas(dados, None, dres, dres[0])
     risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094)
     r = avaliar(dados, dres, None, risco, notas)
-    assert r.piso_usado == "mercado" and r.preco_recomendado >= r.patrimonio_mercado - 0.01
+    assert r.piso_usado == "liquidacao" and r.preco_recomendado >= r.piso_patrimonial - 0.01
+    assert r.preco_recomendado < r.patrimonio_mercado
     assert r.faixa_venda["forcada"] >= min(max(r.piso_patrimonial, 0.0), r.preco_recomendado) - 0.01
+
+
+def test_sinal_receita_acima_da_declarada_so_quando_a_receita_vem_do_caixa():
+    dados = _dados()
+    dres = normalizar(dados)
+    base = dres[0]
+    base.receita_fonte = "gerencial (sem receita declarada nem caixa para confirmar)"
+    assert "receita acima da declarada" not in propor_notas(dados, None, dres, base)["contingencias"].evidencia
+    base.receita_fonte = "caixa (receita acima da declarada comprovada nos extratos)"
+    assert "receita acima da declarada" in propor_notas(dados, None, dres, base)["contingencias"].evidencia

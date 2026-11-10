@@ -79,39 +79,49 @@ def fatos_compactos(pasta: Path) -> str:
     q = json.loads(_ler(saida / "qualitativo.json") or "{}")
     v = json.loads((saida / "valuation.json").read_text(encoding="utf-8"))
     fin = ler_finalidade(saida)
-    linhas = ["## Números-chave (use exatamente estes)",
-              f"- Preço recomendado (venda a mercado): {_r(v['preco_recomendado'])}"]
-    fv = v.get("faixa_venda") or {}
-    if fv:
-        linhas.append(f"- Venda forçada {_r(fv.get('forcada'))} · potencial máximo {_r(fv.get('maximo'))}")
+    linhas = ["## Números-chave (use exatamente estes)"]
     base_c = next((x for x in v.get("cenarios", []) if x["nome"] == "base"), None)
-    if base_c:
-        linhas.append(f"- Valor para o sócio sem margem de segurança (cenário base): {_r(base_c['valor_patrimonio'])} "
-                      "(é o limite do earn-out, não o preço)")
-    try:  # ida a mercado (capítulo 6): mesmos números do relatório
+    try:  # ida a mercado (capítulo 6): é o número que o relatório mostra (10/11/2026)
         dados = DadosCase.model_validate_json((saida / "dados_brutos.json").read_text(encoding="utf-8"))
         dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
         tr = calc_tr.montar(dados, v, fin, _param_valuation(), dres)
-        m = next((x for x in tr["cenarios"] if x["chave"] == "mercado"), None)
+        cen = {x["chave"]: x for x in tr["cenarios"]}
+        m = cen.get("mercado")
         if m:
-            linhas.append(f"- Valor de ida a mercado (preço das cotas + dívidas assumidas, base da comissão ND): "
-                          f"{_r(m['bruto'])} · comissão ND {_r(m['comissao'])} · IR estimado do sócio {_r(m['ir'])} · "
+            linhas.append(f"- Valor de ida a mercado RECOMENDADO (o total que o comprador paga: parte do sócio + dívidas "
+                          f"e obrigações assumidas; base da comissão ND): {_r(m['bruto'])}")
+            if cen.get("forcada") and cen.get("maximo"):
+                linhas.append(f"- Ida a mercado mínima (venda forçada) {_r(cen['forcada']['bruto'])} · máxima "
+                              f"(comprador estratégico) {_r(cen['maximo']['bruto'])}")
+            linhas.append(f"- Composição da ida a mercado recomendada: dívidas e obrigações que o comprador assume "
+                          f"{_r(m['bruto'] - m['preco_cotas'])} + parte do sócio {_r(m['preco_cotas'])} "
+                          f"(a parte do sócio só se cita na estrutura da transação)")
+            linhas.append(f"- Comissão ND {_r(m['comissao'])} · IR estimado do sócio {_r(m['ir'])} · "
                           f"sobra para o dono {_r(m['sobra'])}")
+            if (v.get("fluxo_base") or 0) > 0:
+                linhas.append(f"- Payback da ida a mercado (descontado o caixa que vem com a empresa): "
+                              f"{m['liquido_caixa'] / v['fluxo_base']:.2f} anos (régua da casa: até 3)".replace(".", ",", 1))
+        me = tr.get("metodos") or {}
+        linhas.append(f"- Origem da ida a mercado: {v.get('valor_oferta_origem') or '—'} · fluxo de caixa (base + caixa) "
+                      f" {_r(me.get('dcf'))} · piso = liquidação dos ativos {_r(me.get('liquidacao'))}")
+        if me.get("patrimonio") is not None:
+            linhas.append(f"- Ativos a mercado {_r(me['patrimonio'])}: só referência para a negociação (argumento do "
+                          "vendedor), NÃO é valor da empresa — só se realizam se a operação for encerrada")
         sug = (tr.get("pagamento") or {}).get("estruturas", [None])[-1]
         if sug:
-            linhas.append(f"- Pagamento sugerido: entrada de {sug['entrada_pct']:.0%} ({_r(sug['entrada'])})"
+            linhas.append(f"- Pagamento sugerido da parte do sócio: entrada de {sug['entrada_pct']:.0%} ({_r(sug['entrada'])})"
                           + (f", {sug['n']} parcelas de {_r(sug['parcela'])} corrigidas pelo CDI" if sug["n"] else "")
                           + (f", earn-out até {_r(sug['earnout'])}" if sug["earnout"] else "")
                           + (f", escrow de {_r(sug['escrow'])}" if sug["escrow"] else ""))
     except (OSError, ValueError, KeyError):
-        pass
+        linhas.append(f"- Valor recomendado: {_r(v['preco_recomendado'])}")
     linhas += [
                f"- Receita {v['periodo_base']}: {_r(v['receita_base'])} · EBITDA econômico {_r(v['ebitda_base'])} · "
                f"caixa sustentável {_r(v['fluxo_base'])}/ano",
                f"- Taxa de desconto {v['risco']['taxa_desconto'] * 100:.1f}% (Selic de referência "
                f"{v['risco']['selic'] * 100:.2f}% + prêmio) · horizonte {v['risco']['horizonte_anos']} anos",
                f"- Dívida bruta {_r(v.get('divida_bruta'))} · caixa {_r(v.get('caixa'))}"
-               + (f" · payback do preço {v['payback_preco']} anos (régua da casa: até 3)" if v.get("payback_preco") else ""),
+               ,
                f"- Finalidade: {fin.descricao}" + (f" · pedido do vendedor {_r(fin.pedido_vendedor)}" if fin.pedido_vendedor else "")]
     for c in v.get("contingencias", []):
         linhas.append(f"- Contingência {c['classificacao']}: {c['descricao']} ({_r(c['valor_bruto'])})")

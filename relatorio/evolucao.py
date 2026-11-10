@@ -1,6 +1,7 @@
 """Quanto vira o investimento recomendado: empresa × Selic × IPCA+, a partir do mesmo desembolso (decisão de 07/11/2026).
 
-- Desembolso do comprador = preço recomendado + dívida líquida assumida + contingências prováveis.
+- Desembolso do comprador = valor de ida a mercado (parte do sócio + dívidas e obrigações assumidas). O caixa que
+  vem com a empresa volta para ele no fechamento: entra como caixa inicial (10/11/2026).
 - Empresa, no ano t = caixa gerado até t, reinvestido na Selic esperada, + valor da empresa em t pelo nosso DCF
   (valor presente, à taxa de desconto, do caixa que falta + valor terminal); no último ano, o valor terminal.
 - Selic e IPCA+ = o desembolso rendendo as expectativas Focus de cada ano (IPCA+ com o juro real dos parâmetros).
@@ -34,12 +35,12 @@ def tir(desembolso: float, fluxos: list[float], terminal: float) -> float | None
 
 
 def evolucao(desembolso: float, fluxos: list[float], terminal: float, taxa: float, ano0: int,
-             focus_selic: dict, focus_ipca: dict, juro_real: float) -> dict:
+             focus_selic: dict, focus_ipca: dict, juro_real: float, caixa_inicial: float = 0.0) -> dict:
     """→ {"anos", "empresa", "selic", "ipca_mais", "tir"} com valores em R$ para hoje e cada ano do horizonte."""
     n = len(fluxos)
     anos = [ano0 + i for i in range(n + 1)]
     empresa, selic, ipca = [desembolso], [desembolso], [desembolso]
-    caixa = 0.0
+    caixa = caixa_inicial
     for t in range(1, n + 1):
         s, i = _taxa_ano(focus_selic, anos[t]), _taxa_ano(focus_ipca, anos[t])
         caixa = caixa * (1 + s) + fluxos[t - 1]
@@ -48,4 +49,5 @@ def evolucao(desembolso: float, fluxos: list[float], terminal: float, taxa: floa
         empresa.append(round(caixa + valor_empresa, 2))
         selic.append(round(selic[-1] * (1 + s), 2))
         ipca.append(round(ipca[-1] * (1 + i) * (1 + juro_real), 2))
-    return {"anos": anos, "empresa": empresa, "selic": selic, "ipca_mais": ipca, "tir": tir(desembolso, fluxos, terminal)}
+    return {"anos": anos, "empresa": empresa, "selic": selic, "ipca_mais": ipca,
+            "tir": tir(desembolso - caixa_inicial, fluxos, terminal)}

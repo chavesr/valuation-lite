@@ -1,15 +1,19 @@
 """Capítulo 6 — ida a mercado (código, zero tokens). Regras validadas com a ND em 09/11/2026:
 
 - Valor de ida a mercado (bruto) de cada cenário = valor para o sócio do cenário + o que sai depois (dívida, prováveis);
-  "a mercado" = preço recomendado; mínimo = venda forçada; máximo = otimista (faixa_venda do motor).
-- Métodos comparados: DCF base, patrimônio (ativos a mercado) e estoque (balanço; sem ele, DEFIS). Vale o maior entre
-  DCF e patrimônio, nunca a soma (o caixa da empresa já pressupõe o estoque e os ativos operando).
+  "recomendado" = preço recomendado; mínimo = venda forçada; máximo = otimista (faixa_venda do motor).
+- 10/11/2026: o relatório fala sempre do valor de ida a mercado (mínimo, recomendado, máximo); o preço das cotas só
+  aparece como "parte do sócio" no capítulo 6 (o que ele recebe e como).
+- Métodos comparados (10/11/2026, mesma base de caixa): fluxo (valor da empresa pelo DCF + caixa), liquidação
+  ordenada dos ativos (piso) e, só como referência para a negociação, ativos a mercado e estoque. Vale o fluxo com
+  a faixa são os próprios cenários (opção A: mínimo = conservador, recomendado = base, máximo = otimista); a
+  liquidação só define o valor quando fica acima dele (a empresa vale mais fechada).
 - Comissão ND = maior entre 10% e R$ 150 mil do valor bruto de ida a mercado, paga inteira na entrada.
 - IR do sócio sobre o ganho de capital (alíquotas progressivas), ganho = preço das cotas − comissão − custo das cotas
   (sem o custo informado, considerado zero: o IR real tende a ser menor).
 - Pagamento: premissa ND = 25% de entrada + 24 parcelas mensais corrigidas pelo CDI (o sócio não perde para a renda
   fixa); o que o sócio aceita (reuniões) vem da finalidade. Estrutura sugerida = menor entrada que o sócio aceita com
-  parcela ≤ 70% do caixa mensal + earn-out até o valor sem margem de segurança + escrow das contingências possíveis.
+  parcela ≤ 70% do caixa mensal + earn-out até o cenário otimista + escrow das contingências possíveis.
 """
 
 from __future__ import annotations
@@ -60,15 +64,19 @@ def _passivos_op(dados) -> float:
 
 
 def metodos(dados, v: dict, pv: dict) -> dict:
-    """Valores brutos (antes de dívida e comissão) por método, para comparar com o valor de ida a mercado."""
+    """Valores de ida a mercado por método (antes da comissão), todos com o caixa da empresa dentro."""
     base = next((x for x in v["cenarios"] if x["nome"] == "base"), None)
-    dcf = base["valor_empresa"] if base and (v.get("fluxo_base") or 0) > 0 else None
+    caixa = v.get("caixa") or 0.0
+    dcf = base["valor_empresa"] + caixa if base and (v.get("fluxo_base") or 0) > 0 else None
     est, fonte = _estoque(dados)
     est_merc = est * pv["patrimonio_mercado"]["estoques"] if est else None
-    pat = v.get("ativos_mercado")
-    vale = max([("DCF", dcf), ("Patrimônio", pat)], key=lambda x: x[1] if x[1] is not None else float("-inf"))[0]
-    return {"dcf": dcf, "patrimonio": pat, "estoque": est_merc, "estoque_fonte": fonte, "vale": vale,
-            "haircut_estoque": pv["patrimonio_mercado"]["estoques"]}
+    prov = sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
+    bruta = v.get("divida_bruta") or 0.0
+    liq = v["piso_patrimonial"] + bruta + prov if v.get("piso_patrimonial") is not None else None
+    pat = v["patrimonio_mercado"] + bruta + prov if v.get("patrimonio_mercado") is not None else v.get("ativos_mercado")
+    vale = "Liquidação" if (v.get("valor_oferta_origem") or "").startswith(("liquidação", "ativos")) else "DCF"
+    return {"dcf": dcf, "liquidacao": liq, "patrimonio": pat, "estoque": est_merc,
+            "estoque_fonte": fonte, "vale": vale, "haircut_estoque": pv["patrimonio_mercado"]["estoques"]}
 
 
 def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
@@ -80,27 +88,31 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
     bruta, caixa = v.get("divida_bruta") or 0.0, v.get("caixa") or 0.0
     prov = sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
     sem_caixa = (v.get("fluxo_base") or 0) <= 0
-    pisos = [x for x in (v.get("patrimonio_mercado"), v.get("piso_patrimonial")) if x is not None]
+    piso = v.get("piso_patrimonial") if v.get("piso_usado", "liquidacao") == "liquidacao" else v.get("patrimonio_mercado")
+    pisos = [piso] if piso is not None else []
     pct = getattr(fin, "percentual", 1.0) or 1.0
     custo = getattr(fin, "custo_cotas", None)
     out = []
     for chave, nome, obs in (("forcada", "Mínimo", "venda forçada · 0 a 6 meses"),
-                             ("mercado", "A mercado", "preço recomendado · 6 a 18 meses"),
+                             ("mercado", "Recomendado", "venda a mercado · 6 a 18 meses"),
                              ("maximo", "Máximo", "cenário otimista · comprador estratégico")):
         socio = fv.get(chave)
         if socio is None:
             continue
-        # valor vindo dos ativos (patrimônio a mercado ou liquidação): o bruto são os ativos, o caixa já está dentro e
-        # saem fornecedores e a dívida bruta; vindo do fluxo, os fornecedores já estão na operação e sai a dívida líquida
-        ativos = sem_caixa or any(abs(socio - x) < 1 for x in pisos if x > 0)
-        passivos = _passivos_op(dados) if ativos else 0.0
-        divida = bruta if ativos else bruta - caixa
+        # base única (10/11/2026): o bruto tem o caixa da empresa dentro e sai a dívida bruta + prováveis. Os
+        # fornecedores já saem dentro da liquidação e, no fluxo, fazem parte do giro da operação.
+        ativos = sem_caixa or any(abs(socio - x) < 1 for x in pisos if x > 0) and chave != "maximo"
+        passivos = 0.0
+        divida = bruta
         bruto = socio + divida + prov + passivos
         com = comissao(bruto * pct, p)
         preco_cotas = socio * pct
         ganho = preco_cotas - com - (custo or 0.0)
         ir = ir_ganho_capital(ganho, p["ir_ganho_capital"])
-        out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "divida": divida, "divida_bruta": ativos,
+        # o que o comprador põe de fato: com o valor vindo dos ativos, o caixa da empresa vem junto e volta para ele
+        liquido_caixa = bruto - caixa
+        out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "liquido_caixa": liquido_caixa,
+                    "divida": divida, "divida_bruta": ativos,
                     "passivos": passivos, "provaveis": prov, "socio": socio, "percentual": pct, "preco_cotas": preco_cotas,
                     "comissao": com, "ir": ir, "custo_informado": custo is not None,
                     "sobra": preco_cotas - com - ir, "retencao": v.get("retencao_sugerida") or 0.0})
@@ -117,7 +129,7 @@ def _fator_vp(i: float, n: int) -> float:
 
 def _estrutura(nome: str, preco: float, entrada_pct: float, n: int, earnout: float, escrow: float, com: float,
                i_cdi: float, i_selic: float, caixa_mes: float, desembolso_extra: float, fluxos: list[float],
-               terminal: float, rotulo: str) -> dict:
+               terminal: float, rotulo: str, caixa_inicial: float = 0.0) -> dict:
     entrada = preco * entrada_pct
     financiado = preco - entrada
     parcela = _pmt(financiado, i_cdi, n) if n and financiado > 0 else 0.0
@@ -139,7 +151,7 @@ def _estrutura(nome: str, preco: float, entrada_pct: float, n: int, earnout: flo
             "parcelas_hoje": vp_socio - com - no_fechamento - escrow, "liquido_nominal": entrada + parcela * n - com,
             "vp_socio": vp_socio, "parcela_caixa": parcela / caixa_mes if caixa_mes > 0 and parcela else None,
             "desembolso": entrada + desembolso_extra,
-            "tir": tir(entrada + desembolso_extra, liquidos, terminal) if fluxos else None}
+            "tir": tir(entrada + desembolso_extra - caixa_inicial, liquidos, terminal) if fluxos else None}
 
 
 def pagamento(v: dict, fin, p: dict, cen_mercado: dict | None, recente: float | None = None) -> dict | None:
@@ -152,7 +164,8 @@ def pagamento(v: dict, fin, p: dict, cen_mercado: dict | None, recente: float | 
     i_m = (1 + selic) ** (1 / 12) - 1  # CDI ≈ Selic
     fluxos = base["fluxos"] if (v.get("fluxo_base") or 0) > 0 else []
     caixa_mes = fluxos[0] / 12 if fluxos else 0.0
-    extra = cen_mercado["divida"] + cen_mercado["provaveis"]
+    extra = cen_mercado["divida"] + cen_mercado["provaveis"] + cen_mercado["passivos"]
+    caixa_emp = v.get("caixa") or 0.0  # vem com a empresa: volta ao comprador no fechamento (entra na TIR)
     com, escrow = cen_mercado["comissao"], cen_mercado["retencao"]
     entrada_socio = getattr(fin, "entrada_aceita", None)
     prazo_socio = getattr(fin, "prazo_aceito_meses", None)
@@ -168,19 +181,18 @@ def pagamento(v: dict, fin, p: dict, cen_mercado: dict | None, recente: float | 
         e_sug = 1.0
     # a entrada da sugerida cobre ao menos a comissão e o escrow (que saem inteiros no fechamento)
     e_sug = min(1.0, max(e_sug, math.ceil(round((com + escrow) / preco * 100, 6) / 5) * 5 / 100))
-    # earn-out: até o valor para o sócio sem a margem de segurança (o teto que os números sustentam)
+    # earn-out: até o cenário otimista (10/11/2026: o recomendado já é o base, sem margem)
     aceita_eo = getattr(fin, "aceita_earnout", None)
-    teto = max(base["valor_patrimonio"], preco)
+    otim_c = next((x for x in v["cenarios"] if x["nome"] == "otimista"), None)
+    teto = max((v.get("faixa_venda") or {}).get("maximo") or (otim_c or {}).get("valor_patrimonio") or 0.0, preco)
     earnout = max(teto - preco, 0.0) if aceita_eo is not False and fluxos else 0.0
-    terminal = base["valor_terminal"]
-    if v.get("patrimonio_mercado") is not None:  # o comprador continua dono dos ativos: o fim nunca vale menos que eles
-        terminal = max(terminal, v["patrimonio_mercado"] + extra)
+    terminal = base["valor_terminal"]  # o motor já usa a liquidação dos ativos como piso do valor terminal
     estr = [_estrutura("À vista", preco, 1.0, 0, 0.0, escrow, com, i_m, selic, caixa_mes, extra, fluxos, terminal,
-                       "100% no fechamento"),
+                       "100% no fechamento", caixa_emp),
             _estrutura("Premissa", preco, e0, n0, 0.0, escrow, com, i_m, selic, caixa_mes, extra, fluxos, terminal,
-                       f"{e0:.0%} + {n0} meses"),
+                       f"{e0:.0%} + {n0} meses", caixa_emp),
             _estrutura("Sugerida", preco, e_sug, n0 if e_sug < 1 else 0, earnout, escrow, com, i_m, selic, caixa_mes,
-                       extra, fluxos, terminal, " + ".join(x for x, ok in (("entrada", True), ("parcelas", e_sug < 1),
+                       extra, fluxos, terminal, caixa_inicial=caixa_emp, rotulo=" + ".join(x for x, ok in (("entrada", True), ("parcelas", e_sug < 1),
                                                                          ("earn-out", earnout > 0), ("escrow", escrow > 0)) if ok))]
     # meta do earn-out: caixa do período mais recente se acima do considerado; senão o caixa do otimista no ano 2
     otim = next((x for x in v["cenarios"] if x["nome"] == "otimista"), None)

@@ -39,7 +39,8 @@ def test_cenarios_dono_fecham():
     fin = SimpleNamespace(percentual=1.0, custo_cotas=None)
     cen = tr.cenarios_dono(_v(), _dados(), fin, P)
     m = next(x for x in cen if x["chave"] == "mercado")
-    assert m["bruto"] == 1_000_000 + 200_000 + 50_000  # sócio + dívida líquida + prováveis
+    assert m["bruto"] == 1_000_000 + 300_000 + 50_000  # sócio + dívida bruta + prováveis (caixa dentro, 10/11/2026)
+    assert m["liquido_caixa"] == m["bruto"] - 100_000  # o caixa da empresa volta ao comprador
     assert m["comissao"] == 150_000  # 10% de 1,25 mi < 150 mil
     assert m["sobra"] == 1_000_000 - 150_000 - m["ir"]
     assert m["ir"] == round((1_000_000 - 150_000) * 0.15, 2)
@@ -56,7 +57,7 @@ def test_pagamento_sugere_entrada_que_cabe_no_caixa():
     assert sug["parcela_caixa"] <= 0.70 + 1e-9 and sug["entrada_pct"] >= 0.25
     assert round(sug["entrada_pct"] * 100) % 5 == 0
     assert abs(prem["vp_socio"] - 1_000_000) < 1  # corrigido pelo CDI = Selic: o sócio não perde
-    assert sug["earnout"] == 333_000.0 and pg["earnout_meta"] == 450_000.0
+    assert sug["earnout"] == 600_000.0 and pg["earnout_meta"] == 450_000.0  # até o otimista (10/11/2026)
     assert vista["no_fechamento"] == 1_000_000 - 150_000 - 80_000  # comissão e escrow saem da entrada
     fin.aceita_earnout = False
     assert tr.pagamento(v, fin, P, merc)["estruturas"][-1]["earnout"] == 0

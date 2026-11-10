@@ -31,7 +31,7 @@ NOMES = {"confiabilidade_informacao": "Confiabilidade da informação", "depende
 def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str:
     b = r.base
     linhas = [f"# Valuation — {empresa} ({caso})", "",
-              f"**Preço recomendado (com margem de segurança): R$ {brl(r.preco_recomendado, 0)}**  ",
+              f"**Parte do sócio na ida a mercado recomendada (cenário base): R$ {brl(r.preco_recomendado, 0)}**  ",
               f"Faixa pelo fluxo: conservador R$ {brl(r.cenarios[0].valor_patrimonio, 0)} · **base R$ "
               f"{brl(b.valor_patrimonio, 0)}** · otimista R$ {brl(r.cenarios[2].valor_patrimonio, 0)}", "",
               "## Premissas",
@@ -68,10 +68,10 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
     if r.leitura_finalidade:
         linhas += ["", "## Finalidade da transação", "", *[f"- {x}" for x in r.leitura_finalidade]]
     if r.valor_oferta is not None:
-        linhas += ["", "## Valor de referência (teto para a oferta na rede) e ponte para o dono", "",
-                   f"Maior entre o valor da empresa pelo fluxo e os ativos a mercado (critério da ND): **R$ "
-                   f"{brl(r.valor_oferta, 0)}** — vem de {r.valor_oferta_origem}. É o teto para ofertar; o alvo "
-                   f"da negociação é o preço recomendado (R$ {brl(r.preco_recomendado, 0)}).", "",
+        linhas += ["", "## Valor de ida a mercado recomendado e ponte para o dono", "",
+                   f"O total que o comprador paga (parte do sócio + dívidas assumidas): **R$ "
+                   f"{brl(r.valor_oferta, 0)}** — vem de {r.valor_oferta_origem}. Parte do sócio: R$ "
+                   f"{brl(r.preco_recomendado, 0)}. Ativos a mercado são só referência para a negociação.", "",
                    "| Ponte | R$ |", "|---|---:|"]
         linhas += [f"| {nome} | {brl(v, 0)} |" for nome, v in r.ponte_dono]
     if r.faixa_venda:
@@ -168,12 +168,13 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     arq_val = saida / "valuation_decisoes.json"
     dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
     leia_antigo = dec_val.get("_leia", "").startswith("piso: liquidacao (ativos em venda forçada; padrão")
-    if leia_antigo and dec_val.get("piso") == "liquidacao":  # padrão antigo gravado sozinho: migra (09/11/2026)
-        dec_val["piso"] = "mercado"
-    dec_val.setdefault("piso", "mercado")
-    dec_val["_leia"] = ("piso: mercado (padrão desde 09/11/2026: o preço a mercado é o maior entre o fluxo com margem "
-                        "e o patrimônio a mercado) | liquidacao (só a venda forçada dos ativos como mínimo, mais "
-                        "conservador). A venda forçada (cenário mínimo) nunca fica abaixo da liquidação.")
+    leia_0911 = dec_val.get("_leia", "").startswith("piso: mercado (padrão desde 09/11/2026")
+    if (leia_antigo or leia_0911) and dec_val.get("piso") == "mercado":  # padrão de 09/11 gravado sozinho: migra
+        dec_val["piso"] = "liquidacao"
+    dec_val.setdefault("piso", "liquidacao")
+    dec_val["_leia"] = ("piso: liquidacao (padrão desde 10/11/2026: o valor vem do fluxo, cenário base, e o "
+                        "piso é a liquidação ordenada dos ativos; ativos a mercado só como referência de negociação) | "
+                        "mercado (exceção justificada pelo analista: patrimônio a mercado como piso).")
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"])
     fin = ler_finalidade(saida)  # D7

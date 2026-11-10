@@ -5,7 +5,8 @@
     do último ano (1,5× / 2,5× / 3,0×), nunca abaixo da liquidação dos ativos operacionais
   * perpetuidade só com Score ≤ 30 e teste de perpetuidade aprovado
   * EPV (sem crescimento, perpetuidade) apenas como referência; múltiplo de EBITDA como checagem
-  * valor da empresa − dívida líquida − contingências = valor do patrimônio; preço recomendado com margem de segurança
+  * valor da empresa − dívida líquida − contingências = valor do patrimônio; recomendado = cenário base (opção A,
+    10/11/2026: sem margem de segurança à parte — o conservador e a régua já protegem o comprador)
 """
 
 from __future__ import annotations
@@ -149,6 +150,10 @@ def liquidacao(dados, p: dict, criterio: str = "piso_patrimonial") -> tuple[floa
     return round(piso, 2), round(max(operacionais - passivos_op, 0.0), 2)
 
 
+def criterio_piso(piso_usado: str) -> str:
+    return "patrimonio_mercado" if piso_usado == "mercado" else "piso_patrimonial"
+
+
 def ativos_brutos(dados, p: dict, criterio: str = "patrimonio_mercado") -> float | None:
     """Caixa + recebíveis + estoque + imobilizado a valor de mercado, SEM descontar passivos (critério da ND)."""
     bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
@@ -245,7 +250,7 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
             p: dict | None = None, decisoes_contingencias: dict | None = None,
-            piso_escolhido: str = "mercado") -> ResultadoValuation:
+            piso_escolhido: str = "liquidacao") -> ResultadoValuation:
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
@@ -298,27 +303,36 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
             r.sensibilidade[f"{taxa:.0%}"][f"{g:.0%}"] = round(ev + ajuste_patrimonio, 2)
 
     valor_base = max(base_c.valor_patrimonio, piso or float("-inf")) if piso is not None else base_c.valor_patrimonio
-    r.preco_recomendado = round(max(valor_base * (1 - p["margem_de_seguranca"]["percentual"]), piso or 0.0, 0.0), 2)
+    r.preco_recomendado = round(max(valor_base, piso or 0.0, 0.0), 2)
 
-    # valor de oferta na rede (ND): maior entre o valor da empresa pelo fluxo e os ativos brutos a mercado
+    # valor de ida a mercado (decisão de 10/11/2026): tudo na mesma base de caixa — o que o comprador paga no total
+    # (parte do sócio + dívida bruta + prováveis). Vem do fluxo (valor da empresa + caixa, cenário base);
+    # o piso é a liquidação ordenada dos ativos. Os ativos a mercado viram só referência para a negociação.
     r.ativos_mercado = ativos_brutos(dados, p)
     provaveis = sum(c.valor for c in conts)
-    if r.ativos_mercado is not None and r.ativos_mercado > base_c.valor_empresa:
-        r.valor_oferta, r.valor_oferta_origem = r.ativos_mercado, "ativos a mercado"
-        r.ponte_dono = [("Ativos a mercado (inclui o caixa)", r.ativos_mercado),
-                        ("(−) Fornecedores e obrigações", -passivos_operacionais(dados)),
-                        ("(−) Dívida bruta", -bruta)]
+    passivos_op = passivos_operacionais(dados)
+    do_piso_liq = piso is not None and r.preco_recomendado > 0 and abs(r.preco_recomendado - max(piso, 0.0)) < 1 \
+        and (fluxo <= 0 or piso >= base_c.valor_patrimonio)
+    # base única (10/11/2026): ida a mercado = parte do sócio + dívida bruta + prováveis em todos os métodos (os
+    # fornecedores já saem dentro da liquidação e, no fluxo, fazem parte do giro da operação)
+    if do_piso_liq:
+        r.valor_oferta = round(r.preco_recomendado + bruta + provaveis, 2)
+        r.valor_oferta_origem = ("liquidação dos ativos (piso)" if r.piso_usado == "liquidacao"
+                                 else "ativos a mercado (piso)")
+        r.ponte_dono = [("Ativos a valor de realização (inclui o caixa)", r.preco_recomendado + bruta + passivos_op),
+                        ("(−) Fornecedores e obrigações", -passivos_op), ("(−) Dívida bruta", -bruta)]
     else:
-        r.valor_oferta, r.valor_oferta_origem = base_c.valor_empresa, "fluxo (DCF)"
-        r.ponte_dono = [("Valor da empresa pelo fluxo (DCF base)", base_c.valor_empresa),
-                        ("(−) Dívida líquida (dívida − caixa)", -(bruta - caixa))]
+        r.valor_oferta = round(base_c.valor_empresa + caixa, 2)
+        r.valor_oferta_origem = "fluxo (DCF) + caixa"
+        r.ponte_dono = [("Valor da empresa pelo fluxo (DCF base)", base_c.valor_empresa), ("(+) Caixa da empresa", caixa),
+                        ("(−) Dívida bruta", -bruta)]
     if provaveis:
         r.ponte_dono.append(("(−) Contingências prováveis", -provaveis))
     bp_ult = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
-    if r.valor_oferta_origem == "ativos a mercado" and bp_ult and r.ativos_mercado:
-        peso = (bp_ult.estoques or 0) * p["patrimonio_mercado"]["estoques"] / r.ativos_mercado
+    if do_piso_liq and bp_ult and r.valor_oferta:
+        peso = (bp_ult.estoques or 0) * p[criterio_piso(r.piso_usado)]["estoques"] / r.valor_oferta
         if peso >= 0.5:
-            r.alertas.append(f"Valor de referência vem dos ativos e o estoque é {peso:.0%} deles: confirmar estoque "
+            r.alertas.append(f"Valor de ida a mercado vem dos ativos e o estoque é {peso:.0%} deles: confirmar estoque "
                              "físico e valor de realização antes de ofertar (balanço reapresentado infla estoque).")
     r.ponte_dono.append(("= Sobra para o dono", round(sum(v for _, v in r.ponte_dono), 2)))
     if r.retencao_sugerida:
@@ -327,8 +341,8 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     # faixa de venda (decisão de 07/11/2026): forçada = conservador, mercado = preço recomendado (base com margem),
     # máximo = otimista — sempre progressivos (a margem não pode jogar o preço abaixo da forçada nem acima do máximo)
     cons_v, otim_v = r.cenarios[0].valor_patrimonio, r.cenarios[2].valor_patrimonio
-    # decisão de 09/11/2026: o preço a mercado é o maior entre o fluxo (com margem) e o patrimônio a mercado; a venda
-    # forçada nunca fica abaixo da liquidação ordenada dos ativos
+    # opção A (10/11/2026): a faixa são os próprios cenários — mínimo = conservador (nunca abaixo da liquidação
+    # ordenada), recomendado = base (ou o piso), máximo = otimista
     r.faixa_venda = {"forcada": round(max(min(max(cons_v, piso_liq if piso_liq is not None else cons_v),
                                               r.preco_recomendado), 0.0), 2),
                      "mercado": r.preco_recomendado,
@@ -343,11 +357,10 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
             r.regua_payback[nome] = {"anos": rp[nome], "valor_empresa": ev_regua,
                                      "valor_patrimonio": round(ev_regua - descontos, 2)}
         r.payback_preco = round((r.preco_recomendado + descontos) / fluxo, 2)
-        do_piso = piso is not None and r.preco_recomendado > 0 and abs(r.preco_recomendado - max(piso, 0.0)) < 1
-        if do_piso and r.payback_preco > rp["maximo"]:
-            r.alertas.append(f"Preço recomendado vem do piso patrimonial (ativos), não do fluxo: pelo caixa ele se "
-                             f"pagaria em {r.payback_preco:.1f} anos — a régua da casa não se aplica; a negociação é "
-                             "pelos ativos (confirmar valor de realização).")
+        if do_piso_liq and r.payback_preco > rp["maximo"]:
+            r.alertas.append(f"Valor vem do piso (liquidação dos ativos), não do fluxo: pelo caixa ele se pagaria em "
+                             f"{r.payback_preco:.1f} anos — a empresa vale mais fechada do que funcionando; discutir a "
+                             "venda dos ativos em vez da empresa (confirmar valor de realização).")
         elif r.payback_preco > rp["maximo"]:
             r.alertas.append(f"Preço recomendado se paga em {r.payback_preco:.2f} anos de fluxo: acima da régua da "
                              f"casa ({rp['maximo']:.1f} anos). Comprador dificilmente aceita.")
@@ -375,8 +388,15 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
             r.alertas.append(f"Valor da empresa = {base_c.multiplo_do_fluxo:.1f}× o fluxo: acima do usual para PME; revisar "
                              "o múltiplo terminal e o crescimento.")
     if piso is not None and piso > 0 and piso > base_c.valor_patrimonio:
-        r.alertas.append("Piso patrimonial acima do valor pelo fluxo: a empresa vale mais pelos ativos do que pelo resultado "
-                         "(confirmar estoque e imobilizado a valor de realização).")
+        r.alertas.append("Liquidação dos ativos acima do valor pelo fluxo: a empresa vale mais fechada do que "
+                         "funcionando — o relatório deve dizer isso e discutir a venda dos ativos (confirmar estoque e "
+                         "imobilizado a valor de realização).")
+    ref_ativos = r.patrimonio_mercado + bruta + provaveis if r.patrimonio_mercado is not None else None
+    if ref_ativos is not None and r.valor_oferta and ref_ativos > r.valor_oferta:
+        am, vo = f"{ref_ativos:,.0f}".replace(",", "."), f"{r.valor_oferta:,.0f}".replace(",", ".")
+        r.alertas.append(f"Ativos a mercado (R$ {am} na base de ida a mercado) acima da ida a mercado recomendada "
+                         f"(R$ {vo}): argumento do vendedor na negociação, não valor — os ativos só rendem isso se a "
+                         "operação for encerrada.")
     if base_c.valor_patrimonio < 0 < base_c.valor_empresa:
         anos_div = (bruta - caixa) / fluxo if fluxo > 0 else float("inf")
         r.alertas.append(f"Valor da empresa positivo (R$ {base_c.valor_empresa:,.0f}) mas patrimônio negativo: a dívida "

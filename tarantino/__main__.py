@@ -56,7 +56,8 @@ def cmd_avaliar(args: argparse.Namespace) -> None:
     print(f"Score {r.risco.score:.0f} · taxa {r.risco.taxa_desconto:.1%} · horizonte {r.risco.horizonte_anos} anos · "
           f"fluxo base {_brl(r.fluxo_base)}/ano")
     print("  " + " · ".join(f"{c.nome} {_brl(c.valor_patrimonio)}" for c in r.cenarios))
-    print(f"  preço recomendado (margem de segurança): {_brl(r.preco_recomendado)}")
+    print(f"  parte do sócio na ida a mercado recomendada (cenário base): {_brl(r.preco_recomendado)}"
+          + (f" · ida a mercado {_brl(r.valor_oferta)}" if r.valor_oferta is not None else ""))
     print(f"Detalhes: {args.pasta}/{PASTA_SAIDA}/valuation.md · notas do Score: score_notas.json")
     for linha in r.leitura_finalidade[1:]:
         print(f"  {linha.replace('**', '')}")
