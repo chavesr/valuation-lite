@@ -66,7 +66,9 @@ def montar_entrada(pasta_empresa: str | Path, excluir_referencia: str | None = N
     saida = pasta / PASTA_SAIDA
     dados, dres, gci = _carregar(pasta)
     estado = ler_estado(pasta)
-    playbook = atividade_evidenciada(dados) or "indefinido"
+    from tarantino.normalizar import premissas_case
+
+    playbook = premissas_case(saida).get("atividade") or atividade_evidenciada(dados) or "indefinido"
     if playbook == "indefinido":  # sem questionário, PGDAS nem SPED: o agente escolhe pelo que leu
         setoriais = ["_Atividade principal não informada: use o(s) playbook(s) que se aplica(m) ao que os "
                      "documentos e entrevistas mostram._"] + [(PLAYBOOKS / f"{a}.md").read_text(encoding="utf-8")

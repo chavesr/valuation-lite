@@ -34,6 +34,8 @@ class DemonstracaoNaoLida(Exception):
 _VALOR_A = r"R\$\s*\(?-?[\d.]+,\d{2}\)?"
 _RE_VALORES_A = re.compile(rf"\s*({_VALOR_A})(?:\s+({_VALOR_A}))?\s*$")
 _RE_VALOR_B = re.compile(r"\s+(-?[\d.]+,\d{2})\s*([DC])?\s*$")
+# duas colunas com natureza ("2025 2024": 372.115,79D 498.009,10D)
+_RE_VALOR_B2 = re.compile(r"\s+(-?[\d.]+,\d{2})\s*([DC])?\s+(-?[\d.]+,\d{2})\s*([DC])?\s*$")
 _RE_IGNORAR = re.compile(
     r"^(ENTIDADE:|PERIODO (DA ESCRITURACAO|SELECIONADO)|NUMERO DE ORDEM|DESCRICAO (NOTA|SALDO)|ESTE DOCUMENTO|ESTE RELATORIO|VERSAO |\S*(\.\S\S){8,}|"
     r"EMPRESA:|C\.N\.P\.J|CNPJ:|BALANCO ENCERRADO|DEMONSTRACAO D|BALANCO PATRIMONIAL$|FOLHA:|_{5,}|CPF:|"
@@ -75,6 +77,14 @@ def _separar(texto: str) -> tuple[str, list[float] | None, str | None]:
     if m:
         valores = [_num_a(g) for g in m.groups() if g]
         return texto[: m.start()].strip(), valores, None
+    m = _RE_VALOR_B2.search(texto)
+    if m:
+        v1, n1, v2, n2 = m.groups()
+        v1, v2 = (float(v.replace(".", "").replace(",", ".")) for v in (v1, v2))
+        nat = n1 or n2
+        if n1 and n2 and n1 != n2:
+            v2 = -v2  # o segundo saldo tem natureza oposta à do primeiro
+        return texto[: m.start()].strip(), [v1, v2], nat
     m = _RE_VALOR_B.search(texto)
     if m:
         v = float(m.group(1).replace(".", "").replace(",", "."))
@@ -604,6 +614,12 @@ def ler_linhas_pdf(caminho: str | Path) -> list[Linha]:
                 for i, p in enumerate(pdf.pages) for l in p.extract_text_lines()]
 
 
+def colunas_ano_atual_primeiro(cabecalho: str) -> bool:
+    """Cabeçalho com dois exercícios em ordem decrescente ("2025 2024" ou "31/12/2025 31/12/2024")."""
+    m = re.search(r"(?:\d{2}/\d{2}/)?(20\d{2})\s+(?:\d{2}/\d{2}/)?(20\d{2})\b", cabecalho)
+    return bool(m) and int(m.group(1)) == int(m.group(2)) + 1
+
+
 def ler_demonstracao(caminho: str | Path, linhas: list[Linha] | None = None) -> DemonstracaoLida:
     caminho = Path(caminho)
     linhas = linhas if linhas is not None else ler_linhas_pdf(caminho)
@@ -657,7 +673,10 @@ def ler_demonstracao(caminho: str | Path, linhas: list[Linha] | None = None) -> 
                            data_inicio=inicio, contas=contas, alertas=alertas, gerencial=gerencial)
     confianca = "alta" if not alertas else "media"
     colunas = [(-1, fim.year, "saldo atual")]
-    if layout in ("sped", "classificacao") and len(contas[0].valores) == 2:
+    if colunas_ano_atual_primeiro(cabecalho) and len(contas[0].valores) == 2:
+        # layout "2025 2024" (Domínio e outros): o ano atual vem na 1ª coluna, o comparativo na 2ª
+        colunas = [(0, fim.year, "saldo atual"), (1, fim.year - 1, "comparativo (exercício anterior)")]
+    elif layout in ("sped", "classificacao") and len(contas[0].valores) == 2:
         colunas.append((0, fim.year - 1, "comparativo (saldo anterior)"))
     if doc.cnpj is None:
         doc.alertas.append("CNPJ não encontrado no cabeçalho.")

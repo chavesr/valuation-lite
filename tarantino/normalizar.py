@@ -16,6 +16,34 @@ from engine.normalizacao import DREEconomica, carregar_parametros, normalizar
 from tarantino.case import DadosCase, EstadoCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
 
+PREMISSAS_CASE = "parametros_case.json"
+
+
+def _mesclar(base: dict, novo: dict) -> None:
+    for k, v in novo.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            _mesclar(base[k], v)
+        else:
+            base[k] = v
+
+
+def premissas_case(saida: Path) -> dict:
+    """`_valuation/parametros_case.json` (opcional): premissas do analista só para este case — sobrepõem os
+    parâmetros da metodologia (ex.: equiparação hospitalar no Presumido) e podem fixar a "atividade"
+    (industria | comercio | servicos) quando não há questionário, PGDAS nem SPED. Chaves com "_" são notas."""
+    arq = Path(saida) / PREMISSAS_CASE
+    return json.loads(arq.read_text(encoding="utf-8")) if arq.exists() else {}
+
+
+def parametros_do_case(saida: Path) -> dict:
+    p = carregar_parametros()
+    premissas = {k: v for k, v in premissas_case(saida).items() if not k.startswith("_")}
+    atividade = premissas.pop("atividade", None)
+    _mesclar(p, premissas)
+    if atividade:
+        p["atividade_case"] = atividade
+    return p
+
 
 def _md(estado: EstadoCase, dres: list[DREEconomica]) -> str:
     if not dres:
@@ -65,7 +93,7 @@ def normalizar_case(pasta_empresa: str | Path) -> list[DREEconomica]:
 
     arq_dec = saida / "ajustes_decisoes.json"
     decisoes = json.loads(arq_dec.read_text(encoding="utf-8")) if arq_dec.exists() else {}
-    dres = normalizar(dados, decisoes, carregar_parametros())
+    dres = normalizar(dados, decisoes, parametros_do_case(saida))
 
     # Checkpoint 2: mantém o que o analista já decidiu e acrescenta os ajustes novos
     for d in dres:

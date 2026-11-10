@@ -140,7 +140,7 @@ def propor_notas(dados, gci: ResultadoGCI | None, dres: list[DREEconomica], base
     sinais = []
     alertas_case = getattr(dados, "alertas", None) or []
     texto = " ".join(alertas_case)
-    if base and "caixa" in base.receita_fonte:
+    if base and base.receita_fonte.startswith("caixa"):  # não casar "gerencial (sem ... nem caixa para confirmar)"
         sinais.append("receita acima da declarada")
     if any("indício de venda sem nota" in a or "valores redondos" in a for a in alertas_case):
         sinais.append("DRE gerencial divergente")
