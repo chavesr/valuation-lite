@@ -15,6 +15,7 @@ from datetime import date
 from pathlib import Path
 
 from engine.finalidade import ler_finalidade
+from engine.score_case import excluir_haveres_socios
 from julgamento.esquemas import TextosRelatorio
 from julgamento.executor import ErroJulgamento, executar_claude_code, extrair_json
 from relatorio import financeiro as calc_fin
@@ -72,6 +73,13 @@ def _r(v: float | None) -> str:
     return "—" if v is None else (f"−R$ {abs(v):,.0f}" if v < 0 else f"R$ {v:,.0f}").replace(",", ".")
 
 
+def _dados(saida: Path) -> DadosCase:
+    """dados_brutos.json com as decisões do analista que mudam o balanço (haveres de sócio fora da dívida)."""
+    dados = DadosCase.model_validate_json((saida / "dados_brutos.json").read_text(encoding="utf-8"))
+    excluir_haveres_socios(dados, json.loads(_ler(saida / "valuation_decisoes.json") or "{}"))
+    return dados
+
+
 def fatos_compactos(pasta: Path) -> str:
     """Ficha enxuta para o redator (corte de tokens, 07/11/2026): fatos da F5, números-chave e alertas decididos —
     em vez dos resumos inteiros (normalização, valuation, revisão)."""
@@ -82,7 +90,7 @@ def fatos_compactos(pasta: Path) -> str:
     linhas = ["## Números-chave (use exatamente estes)"]
     base_c = next((x for x in v.get("cenarios", []) if x["nome"] == "base"), None)
     try:  # ida a mercado (capítulo 6): é o número que o relatório mostra (10/11/2026)
-        dados = DadosCase.model_validate_json((saida / "dados_brutos.json").read_text(encoding="utf-8"))
+        dados = _dados(saida)
         dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
         tr = calc_tr.montar(dados, v, fin, _param_valuation(), dres)
         cen = {x["chave"]: x for x in tr["cenarios"]}
@@ -96,6 +104,17 @@ def fatos_compactos(pasta: Path) -> str:
             linhas.append(f"- Composição da ida a mercado recomendada: dívidas e obrigações que o comprador assume "
                           f"{_r(m['bruto'] - m['preco_cotas'])} + parte do sócio {_r(m['preco_cotas'])} "
                           f"(a parte do sócio só se cita na estrutura da transação)")
+            if v.get("haveres_fora_da_divida"):
+                linhas.append(f"- A empresa não tem dívida (endividamento zero). Os {_r(v['haveres_fora_da_divida'])} de "
+                              "haveres de sócio que aparecem no balanço são lançamento contábil e ficam fora do valuation, "
+                              "por decisão do analista: não os cite como dívida")
+            if m.get("rescisao_condicional"):
+                linhas.append(f"- Passivo trabalhista condicional (NÃO descontado do valor): se houver desligamentos, a "
+                              f"rescisão de todos os CLT custaria até {_r(m['rescisao_condicional'])} (estimativa)")
+            if m.get("credito_vendedor"):
+                linhas.append(f"- Das dívidas da empresa, {_r(m['credito_vendedor'])} são devidas ao próprio sócio "
+                              "vendedor (dividendos a pagar/mútuo): saem do valor, mas voltam para ele na quitação e "
+                              "já estão somadas na sobra para o dono")
             linhas.append(f"- Comissão ND {_r(m['comissao'])} · IR estimado do sócio {_r(m['ir'])} · "
                           f"sobra para o dono {_r(m['sobra'])}")
             if (v.get("fluxo_base") or 0) > 0:
@@ -211,7 +230,7 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     estado = ler_estado(pasta)
     v = json.loads((saida / "valuation.json").read_text(encoding="utf-8"))
     dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
-    dados = DadosCase.model_validate_json((saida / "dados_brutos.json").read_text(encoding="utf-8"))
+    dados = _dados(saida)
     qual = json.loads(_ler(saida / "qualitativo.json") or "{}")
     foto = json.loads(_ler(saida / "mercado.json") or "{}")
     fin = ler_finalidade(saida)
@@ -291,6 +310,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                   "operacional": calc_fin.operacional_planilha(dados) or calc_fin.operacional_f5(qual),
                   "leituras": calc_fin.leituras_verticais(qual),
                   "transacao": calc_tr.montar(dados, v, fin, _param_valuation(), dres),
+                  "ativos": calc_fin.ativos_empresa(dados, json.loads(_ler(saida / "ativos.json") or "{}"),
+                                                    _param_valuation()),
                   "projecao": calc_fin.projecao_dre(dres, v, hoje.year)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,

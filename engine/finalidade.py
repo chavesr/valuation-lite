@@ -20,7 +20,9 @@ LEIA = ("tipo: venda_total | venda_parcial | entrada_socio · percentual: fraç�
         "aporte: dinheiro novo que entra na empresa (entrada de sócio), em R$ · pedido_vendedor: quanto o dono pede "
         "pela participação, em R$ · entrada_aceita / prazo_aceito_meses / aceita_earnout: forma de pagamento que o "
         "sócio aceita (reuniões; vazio = premissa ND de 25% + 24 meses) · custo_cotas: custo de aquisição das cotas "
-        "na declaração do sócio, em R$ (para o IR sobre o ganho de capital)")
+        "na declaração do sócio, em R$ (para o IR sobre o ganho de capital) · credito_vendedor: parte da dívida da "
+        "empresa devida ao próprio vendedor (dividendos a pagar, mútuo), em R$ — volta para ele na quitação · "
+        "rescisao_condicional: {valor, base} — custo de desligar os CLT, em R$; só informativo, não sai do valor")
 
 
 class Finalidade(BaseModel):
@@ -32,6 +34,10 @@ class Finalidade(BaseModel):
     prazo_aceito_meses: int | None = Field(None, ge=0, le=120)
     aceita_earnout: bool | None = None
     custo_cotas: float | None = None  # custo de aquisição das cotas (capital integralizado), para o IR do sócio
+    credito_vendedor: float | None = None  # parte da dívida da empresa devida ao próprio vendedor (dividendos a pagar,
+    # mútuos): sai do valor como dívida, mas volta para ele na quitação (10/11/2026, GSD)
+    rescisao_condicional: dict | None = None  # {valor, base}: rescisão dos CLT se houver desligamentos — passivo
+    # condicional, só nota no quadro do dono, não desconta (10/11/2026, Vedis)
 
     @property
     def descricao(self) -> str:

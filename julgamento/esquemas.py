@@ -191,6 +191,9 @@ class Qualitativo(BaseModel):
     operacional: Operacional | None = None
     linhas_receita: list[LinhaReceita] = Field(default_factory=list, max_length=6)
     clientes_principais: list[ClienteDeclarado] = Field(default_factory=list, max_length=10)
+    clientes_total: int | None = Field(None, ge=0, description="quantos clientes ativos a empresa tem no total "
+                                       "(ex.: lista com cerca de 70 distribuidores), se o pacote informar; os maiores "
+                                       "vão em clientes_principais")
     operacao_ativos: OperacaoAtivos | None = None
     leitura_verticais: list[LeituraVertical] = Field(default_factory=list, max_length=8)
 

@@ -37,6 +37,19 @@ def _ultimo_balanco(dados):
     return max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
 
 
+def excluir_haveres_socios(dados, decisoes: dict | None) -> float:
+    """Decisão do analista (valuation_decisoes.json → haveres_socios_fora_da_divida.ativo): dívida da empresa com sócio
+    ou ex-sócio (dividendos a pagar, haveres, mútuo) que é lançamento contábil e não dívida da operação. Zera
+    `mutuos_socios` no último balanço, em memória, para o Score, a ponte e a liquidação (10/11/2026, Vedis: caminho B).
+    → valor excluído (0 se a decisão não está ativa)."""
+    d = (decisoes or {}).get("haveres_socios_fora_da_divida") or {}
+    bp = _ultimo_balanco(dados)
+    if not d.get("ativo") or not bp or not bp.mutuos_socios:
+        return 0.0
+    valor, bp.mutuos_socios = bp.mutuos_socios, 0.0
+    return round(valor, 2)
+
+
 def divida_liquida(dados) -> tuple[float, float, str]:
     """→ (dívida bruta, caixa, fonte). Dívida dos extratos bancários quando houver (mais atual), senão do Balanço."""
     bp = _ultimo_balanco(dados)

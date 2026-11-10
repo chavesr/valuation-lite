@@ -72,8 +72,9 @@ def metodos(dados, v: dict, pv: dict) -> dict:
     est_merc = est * pv["patrimonio_mercado"]["estoques"] if est else None
     prov = sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
     bruta = v.get("divida_bruta") or 0.0
-    liq = v["piso_patrimonial"] + bruta + prov if v.get("piso_patrimonial") is not None else None
-    pat = v["patrimonio_mercado"] + bruta + prov if v.get("patrimonio_mercado") is not None else v.get("ativos_mercado")
+    pdt = sum((v.get("passivos_desconto") or {}).values())
+    liq = v["piso_patrimonial"] + bruta + prov + pdt if v.get("piso_patrimonial") is not None else None
+    pat = v["patrimonio_mercado"] + bruta + prov + pdt if v.get("patrimonio_mercado") is not None else v.get("ativos_mercado")
     vale = "Liquidação" if (v.get("valor_oferta_origem") or "").startswith(("liquidação", "ativos")) else "DCF"
     return {"dcf": dcf, "liquidacao": liq, "patrimonio": pat, "estoque": est_merc,
             "estoque_fonte": fonte, "vale": vale, "haircut_estoque": pv["patrimonio_mercado"]["estoques"]}
@@ -92,6 +93,9 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
     pisos = [piso] if piso is not None else []
     pct = getattr(fin, "percentual", 1.0) or 1.0
     custo = getattr(fin, "custo_cotas", None)
+    credito = min(getattr(fin, "credito_vendedor", None) or 0.0, bruta)  # dívida com o próprio vendedor
+    pdesc = v.get("passivos_desconto") or {}
+    comp = v.get("divida_componentes") or {"bancarios": bruta, "tributarios": 0.0, "socios": 0.0}
     out = []
     for chave, nome, obs in (("forcada", "Mínimo", "venda forçada · 0 a 6 meses"),
                              ("mercado", "Recomendado", "venda a mercado · 6 a 18 meses"),
@@ -99,12 +103,18 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         socio = fv.get(chave)
         if socio is None:
             continue
+        # dívida maior que o valor da operação (10/11/2026, GSD): a parte do sócio fica negativa — o comprador paga
+        # o valor da empresa pelo fluxo + caixa, e o vendedor cobre a diferença das dívidas; zerar a parte do sócio e
+        # somar a dívida inteira inflaria a ida a mercado até o valor da dívida
+        cen = nomes.get({"forcada": "conservador", "mercado": "base", "maximo": "otimista"}[chave])
+        if not sem_caixa and socio <= 0 and cen is not None and cen < 0:
+            socio = max(cen, piso) if piso is not None else cen  # mínimo nunca abaixo da liquidação ordenada
         # base única (10/11/2026): o bruto tem o caixa da empresa dentro e sai a dívida bruta + prováveis. Os
         # fornecedores já saem dentro da liquidação e, no fluxo, fazem parte do giro da operação.
         ativos = sem_caixa or any(abs(socio - x) < 1 for x in pisos if x > 0) and chave != "maximo"
         passivos = 0.0
         divida = bruta
-        bruto = socio + divida + prov + passivos
+        bruto = socio + divida + prov + passivos + sum(pdesc.values())
         com = comissao(bruto * pct, p)
         preco_cotas = socio * pct
         ganho = preco_cotas - com - (custo or 0.0)
@@ -112,10 +122,14 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         # o que o comprador põe de fato: com o valor vindo dos ativos, o caixa da empresa vem junto e volta para ele
         liquido_caixa = bruto - caixa
         out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "liquido_caixa": liquido_caixa,
-                    "divida": divida, "divida_bruta": ativos,
+                    "divida": divida, "divida_bruta": ativos, "divida_componentes": comp,
+                    "fornecedores_vencidos": pdesc.get("fornecedores", 0.0),
+                    "trabalhistas": pdesc.get("trabalhistas", 0.0),
                     "passivos": passivos, "provaveis": prov, "socio": socio, "percentual": pct, "preco_cotas": preco_cotas,
-                    "comissao": com, "ir": ir, "custo_informado": custo is not None,
-                    "sobra": preco_cotas - com - ir, "retencao": v.get("retencao_sugerida") or 0.0})
+                    "comissao": com, "ir": ir, "custo_informado": custo is not None, "credito_vendedor": credito,
+                    "rescisao_condicional": ((getattr(fin, "rescisao_condicional", None) or {}).get("valor") or 0.0),
+                    "rescisao_base": (getattr(fin, "rescisao_condicional", None) or {}).get("base"),
+                    "sobra": preco_cotas - com - ir + credito, "retencao": v.get("retencao_sugerida") or 0.0})
     return out
 
 

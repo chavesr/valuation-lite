@@ -14,7 +14,7 @@ from captacao.util import brl
 from engine.gci import ResultadoGCI
 from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
-from engine.score_case import NotaDimensao, aplicar_qualitativo, propor_notas
+from engine.score_case import NotaDimensao, aplicar_qualitativo, excluir_haveres_socios, propor_notas
 from engine.finalidade import leitura, ler_finalidade
 from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
 from tarantino.mercado import DadoIndisponivel, mudancas, obter_mercado, selic_por_horizonte
@@ -37,7 +37,8 @@ def _md(empresa: str, caso: str, r: ResultadoValuation, selic_fonte: str) -> str
               "## Premissas",
               f"- Fluxo base (owner earnings sustentável): **R$ {brl(r.fluxo_base, 0)}/ano** — {r.fluxo_fonte}",
               f"- EBITDA econômico do período base ({r.periodo_base}): R$ {brl(r.ebitda_base, 0)} · receita R$ {brl(r.receita_base, 0)}",
-              f"- Crescimento histórico da receita: {r.crescimento_historico:.1%}" if r.crescimento_historico is not None
+              f"- Crescimento histórico da receita: {r.crescimento_historico:.1%}"
+              + (f" ({r.crescimento_fonte})" if r.crescimento_fonte else "") if r.crescimento_historico is not None
               else "- Crescimento histórico: não calculável (menos de 2 exercícios)",
               f"- Score de Risco **{r.risco.score:.0f}/100** → taxa **{r.risco.taxa_desconto:.1%}** a.a. (Selic "
               f"{r.risco.selic:.2%} — {selic_fonte} — + prêmio {r.risco.premio_implicito:.1%}) · horizonte "
@@ -128,6 +129,9 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     gci = ResultadoGCI.model_validate_json((saida / "gci.json").read_text(encoding="utf-8")) \
         if (saida / "gci.json").exists() else None
     p = carregar_parametros()
+    arq_val = saida / "valuation_decisoes.json"
+    dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
+    haveres = excluir_haveres_socios(dados, dec_val)
 
     base = next((d for d in dres if d.confianca != "baixa"), dres[0])
     notas = propor_notas(dados, gci, dres, base)
@@ -165,8 +169,6 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
                              f"python -m tarantino avaliar \"{pasta}\" --atualizar-mercado")
     arq_cont = saida / "contingencias_decisoes.json"
     dec_cont = json.loads(arq_cont.read_text(encoding="utf-8")) if arq_cont.exists() else {}
-    arq_val = saida / "valuation_decisoes.json"
-    dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
     leia_antigo = dec_val.get("_leia", "").startswith("piso: liquidacao (ativos em venda forçada; padrão")
     leia_0911 = dec_val.get("_leia", "").startswith("piso: mercado (padrão desde 09/11/2026")
     if (leia_antigo or leia_0911) and dec_val.get("piso") == "mercado":  # padrão de 09/11 gravado sozinho: migra
@@ -174,9 +176,20 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     dec_val.setdefault("piso", "liquidacao")
     dec_val["_leia"] = ("piso: liquidacao (padrão desde 10/11/2026: o valor vem do fluxo, cenário base, e o "
                         "piso é a liquidação ordenada dos ativos; ativos a mercado só como referência de negociação) | "
-                        "mercado (exceção justificada pelo analista: patrimônio a mercado como piso).")
+                        "mercado (exceção justificada pelo analista: patrimônio a mercado como piso). · "
+                        "haveres_socios_fora_da_divida: {ativo, motivo} — dívida com sócio/ex-sócio que é só lançamento "
+                        "contábil: sai da dívida (Score, ponte e liquidação). · fornecedores_vencidos: {valor, fonte} — "
+                        "passivo com fornecedores vencido, postergado ou renegociado, em R$ (contas a pagar no prazo ficam "
+                        "no giro); desconta da parte do sócio.")
+    dec_val.setdefault("fornecedores_vencidos", {"valor": None, "fonte": None})
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
-    resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"])
+    resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"],
+                        crescimento_informado=dec_val.get("crescimento_historico"),
+                        fornecedores_vencidos=(dec_val.get("fornecedores_vencidos") or {}).get("valor"))
+    if haveres:
+        resultado.haveres_fora_da_divida = haveres
+        resultado.alertas.append(f"Haveres de sócio de R$ {brl(haveres, 0)} fora da dívida por decisão do analista "
+                                 f"({(dec_val['haveres_socios_fora_da_divida'].get('motivo') or 'sem motivo')}).")
     fin = ler_finalidade(saida)  # D7
     resultado.finalidade = fin.descricao
     resultado.leitura_finalidade, alertas_fin = leitura(fin, resultado.preco_recomendado, resultado.valor_oferta,

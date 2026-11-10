@@ -396,10 +396,40 @@ def clientes_f5(qual: dict, dre: dict, dados) -> dict | None:
         if r["setor"]:
             setores[r["setor"]] = setores.get(r["setor"], 0.0) + r["participacao"] * 100
     return {"ano": ano, "fonte": FONTE_F5 + (f"; participação sobre a receita de {ano}" if ano else ""),
-            "base_receita": True, "clientes_pj": len(linhas), "rotulo_qtd": "Clientes citados",
+            "base_receita": True, "clientes_pj": qual.get("clientes_total") or len(linhas),
+            "rotulo_qtd": "Clientes ativos" if qual.get("clientes_total") else "Clientes citados",
+            "obs_qtd": "declarado pelos sócios" if qual.get("clientes_total") else None,
             "maior": com_valor[0]["participacao"] if com_valor else None, "top5": soma(5), "top10": soma(10),
             "ranking": linhas[:10],
             "por_setor": sorted(setores.items(), key=lambda x: -x[1])}
+
+
+ATIVOS = (("imoveis", "Imóveis"), ("veiculos", "Veículos"), ("maquinas_equipamentos", "Máquinas e equipamentos"),
+          ("moveis_informatica", "Móveis e informática"), ("estoques", "Estoque"), ("contas_receber", "Contas a receber"))
+
+
+def ativos_empresa(dados, ativos: dict | None, p: dict) -> dict:
+    """Aba 'Ativos da empresa' (11/11/2026). Estoque e contas a receber vêm do último balanço, a valor de realização
+    da liquidação ordenada; imóveis, veículos, máquinas e móveis vêm de _valuation/ativos.json (relação de bens,
+    preenchida pelo analista) — sem o dado, n/d. Fecha com o imobilizado líquido do balanço, como entra no piso."""
+    bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
+    h = p.get("piso_patrimonial") or {}
+    itens = (ativos or {}).get("itens") or {}
+    linhas = []
+    for chave, nome in ATIVOS:
+        it = itens.get(chave) or {}
+        contabil, realiz, obs = it.get("valor_contabil"), it.get("valor_realizacao"), it.get("obs")
+        if chave in ("estoques", "contas_receber") and bp is not None and contabil is None:
+            contabil = getattr(bp, chave)
+            if contabil is not None and realiz is None:
+                realiz = contabil * h.get(chave, 1.0)
+                obs = obs or f"balanço de {bp.data_base:%m/%Y}; liquidação a {h.get(chave, 1.0):.0%}"
+        linhas.append({"nome": nome, "contabil": contabil, "realizacao": realiz, "obs": obs})
+    imob = None
+    if bp is not None and bp.imobilizado_liquido is not None:
+        imob = {"contabil": bp.imobilizado_liquido, "realizacao": bp.imobilizado_liquido * h.get("imobilizado", 1.0),
+                "obs": f"balanço de {bp.data_base:%m/%Y}; liquidação a {h.get('imobilizado', 1.0):.0%}"}
+    return {"linhas": linhas, "imobilizado": imob, "fonte": (ativos or {}).get("fonte")}
 
 
 def linhas_receita_f5(qual: dict) -> dict | None:

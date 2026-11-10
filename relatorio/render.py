@@ -116,6 +116,7 @@ table.compacta td, table.compacta th { padding: .55mm 1.8mm; line-height: 1.25; 
 small { font-size: 6.8pt; color: var(--gray2); }
 .aviso { background: var(--cinza-quadro); padding: 2mm 3mm; margin: 2mm 0; border-radius: 3mm; }
 .disclaimer { font-size: 6.8pt; color: var(--gray2); margin-top: 6mm; border-top: 1px solid var(--line); padding-top: 2mm; }
+table.ativos td:nth-child(1) { width: 27%; white-space: nowrap; } table.ativos td:nth-child(2), table.ativos td:nth-child(3) { width: 9%; }
 table.riscos td:nth-child(1) { width: 62%; } table.riscos td:nth-child(2) { width: 9%; }
 table.riscos td:nth-child(3) { width: 29%; }
 """
@@ -135,6 +136,21 @@ def pct(v: float | None, casas: int = 1) -> str:
 def _p(texto: str) -> str:
     return "".join(f"<p>{escape(par.strip())}</p>" for par in texto.split("\n") if par.strip())
 
+
+
+def _card_divida(c: dict, v: dict) -> tuple[str, str, str] | None:
+    """Dívida da empresa com o próprio sócio (credito_vendedor): o card mostra a dívida com terceiros e o caixa
+    líquido — os haveres são quitados ao sócio na venda (10/11/2026, Vedis)."""
+    cred = max(((x.get("credito_vendedor") or 0.0) for x in (_ida(c) or {}).values()), default=0.0)
+    if cred <= 0:
+        if v.get("haveres_fora_da_divida") and (v.get("divida_bruta") or 0) < 1:  # caminho B: endividamento zero
+            return "Dívida", "Zero", f"caixa líquido de {g.brl_compacto(v.get('caixa') or 0)}"
+        return None
+    terceiros = max((v.get("divida_bruta") or 0) - cred, 0.0)
+    liq = terceiros - (v.get("caixa") or 0)
+    val = "Zero" if terceiros < 1 else g.brl_compacto(terceiros)
+    obs = (f"caixa líquido de {g.brl_compacto(-liq)}" if liq < 0 else f"dívida líquida de {g.brl_compacto(liq)}")         + f"; {g.brl_compacto(cred)} de haveres do sócio quitados na venda"
+    return "Dívida com terceiros", val, obs
 
 def _ul(itens: list[str], classe: str = "marcador") -> str:
     return f"<ul class='{classe}'>" + "".join(f"<li>{escape(i)}</li>" for i in itens) + "</ul>"
@@ -207,7 +223,7 @@ def _offsets(c: dict) -> tuple[float, float]:
     igual em todos os métodos (base única, 10/11/2026). Mantém o par (fluxo, ativos) para os chamadores."""
     v = c["valuation"]
     prov = sum(x["valor_bruto"] for x in v.get("contingencias", []) if x["classificacao"] == "provavel")
-    off = (v.get("divida_bruta") or 0.0) + prov
+    off = (v.get("divida_bruta") or 0.0) + prov + sum((v.get("passivos_desconto") or {}).values())
     return off, off
 
 
@@ -255,6 +271,8 @@ def cap1_visao_geral(c: dict) -> str:
              "anos de caixa · régua da casa: até 3"),
             ("divida", "Dívida líquida", g.brl_compacto(divida_liq),
              f"{divida_liq / v['ebitda_base']:.1f}× o EBITDA".replace(".", ",") if v["ebitda_base"] > 0 else "")]
+    if (cd := _card_divida(c, v)):
+        kpis[-1] = ("divida",) + cd
     kpi_html = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
                        f'<div class="val">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
                        for ic, rot, val, obs in kpis)
@@ -343,10 +361,7 @@ def cap2_empresa(c: dict) -> str:
                           f'{escape(tit)}</div>{_ul(m.get(k) or ["—"])}</div>'
                           for k, tit, ic in (("operacao", "Operação", "empresa"), ("venda", "Como vende", "pessoas"),
                                              ("receita", "Como ganha dinheiro", "divida")))
-        mix = q.get("mix_receita") or []
-        extra = ('<div class="legenda-graf">Participação na receita (declarada)</div>'
-                 + g.barras_percentual([(x["item"], x["percentual"]) for x in mix])) if mix else ""
-        h.append(_secao("Modelo de negócio", "receita", f'<div class="tres">{colunas}</div>{extra}'))
+        h.append(_secao("Modelo de negócio", "receita", f'<div class="tres">{colunas}</div>'))
     org = q.get("organograma") or []
     decide = q.get("quem_decide") or []
     corpo = ""
@@ -460,7 +475,8 @@ def _bloco_clientes(cl: dict | None) -> str:
                      + f"<td class='n'>{_mil(r['valor'])}</td><td class='n'>{_pct_frac(r['participacao'])}</td></tr>"
                      for i, r in enumerate(cl["ranking"][:10], 1))
     ano = f" em {cl['ano']}" if cl.get("ano") else ""
-    cards = [(cl.get("rotulo_qtd") or "Clientes", str(cl.get("clientes_pj") or ND), ano.strip() or "no período"),
+    cards = [(cl.get("rotulo_qtd") or "Clientes", str(cl.get("clientes_pj") or ND),
+              cl.get("obs_qtd") or ano.strip() or "no período"),
              ("Maior cliente", _pct_frac(cl.get("maior")), "da receita"),
              ("5 maiores", _pct_frac(cl.get("top5")), "da receita"),
              ("10 maiores", _pct_frac(cl.get("top10")), "da receita")]
@@ -671,14 +687,33 @@ def _pp(v: float) -> str:
     return f"{v * 100:.1f} p.p.".replace(".", ",", 1)
 
 
+def _bloco_ativos(at: dict | None) -> str:
+    if not at:
+        return _nd_nota("o balanço e a relação de bens (imóveis, veículos, máquinas, móveis).")
+
+    def lin(r, cls=""):
+        return (f"<tr class='{cls}'><td>{escape(r['nome'])}</td>"
+                f"<td class='n'>{_mil(r['contabil']) if r['contabil'] is not None else ND}</td>"
+                f"<td class='n'>{_mil(r['realizacao']) if r['realizacao'] is not None else ND}</td>"
+                f"<td class='obs-cel'>{escape(r.get('obs') or '')}</td></tr>")
+
+    corpo = "".join(lin(r) for r in at["linhas"])
+    if at.get("imobilizado"):
+        corpo += lin({"nome": "Imobilizado líquido (balanço)", **at["imobilizado"]}, "sub")
+    nota = ("R$ mil. Contábil: balanço ou relação de bens (custo de aquisição). Realização: liquidação ordenada, "
+            "base do piso do valuation. n/d = sem o dado.") + (f" Relação de bens: {at['fonte']}." if at.get("fonte") else "")
+    return ('<table class="compacta ativos"><tr><th>Ativo</th><th class="n">Contábil</th>'
+            '<th class="n">Realização</th><th>Observação</th></tr>' + corpo + '</table>'
+            f'<div class="nota">{escape(nota)}</div>')
+
+
 def cap5_valuation(c: dict) -> str:
     t, v = c["textos"], c["valuation"]
     r = v["risco"]
     cen = {x["nome"]: x for x in v["cenarios"]}
     base = cen.get("base")
     div_liq = (v.get("divida_bruta") or 0) - (v.get("caixa") or 0)
-    h = ['<section class="capitulo">', _cab(5, "Valuation", c),
-         _quadro("Leitura do valuation", "valor", _p(t["leitura_valuation"]), "destaque")]
+    h = ['<section class="capitulo">', _cab(5, "Valuation", c)]
 
     # premissas
     perp = ("com perpetuidade" if v.get("perpetuidade")
@@ -691,6 +726,8 @@ def cap5_valuation(c: dict) -> str:
               f"histórico de {pct(v['crescimento_historico'])} a.a." if v.get("crescimento_historico") is not None else ""),
              ("calendario", "Horizonte", f"{r['horizonte_anos']} anos", perp),
              ("faixa", "Dívida líquida", g.brl_compacto(div_liq), "dívida − caixa no último balanço")]
+    if (cd := _card_divida(c, v)):
+        cards[-1] = ("faixa",) + cd
     kpis = "".join(f'<div class="kpi"><div class="rot">{icone(ic, cor="#6B6B6B", tam=11)}{escape(rot)}</div>'
                    f'<div class="val pequeno">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
                    for ic, rot, val, obs in cards)
@@ -740,9 +777,6 @@ def cap5_valuation(c: dict) -> str:
     off_fluxo, off_ativos = _offsets(c)
     merc = _ida(c).get("mercado")
     caixa_emp = v.get("caixa") or 0.0
-    barras = g.barras_valor([(nomes.get(x["nome"], x["nome"]), x["valor_empresa"] + caixa_emp,
-                              f"taxa {pct(x['taxa'])} · cresc. {pct(x['crescimento'])}", x["nome"] == "base")
-                             for x in v["cenarios"]])
     tab = ('<table class="compacta"><tr><th></th>' + "".join(f"<th class='n'>{nomes.get(x['nome'], x['nome'])}</th>"
                                                            for x in v["cenarios"]) + "</tr>"
            + "".join(f"<tr class='{cls}'><td>{rot}</td>" + "".join(f"<td class='n'>{fn(x)}</td>" for x in v["cenarios"])
@@ -751,9 +785,11 @@ def cap5_valuation(c: dict) -> str:
                                           ("(+) Caixa da empresa", lambda x: _mil(caixa_emp), ""),
                                           ("= Valor da empresa", lambda x: f"<b>{_mil(x['valor_empresa'] + caixa_emp)}</b>",
                                            "total"),
+                                          ("Taxa de desconto", lambda x: pct(x["taxa"]), "margem"),
+                                          ("Crescimento", lambda x: pct(x["crescimento"]), "margem"),
                                           ("Múltiplo do caixa (operação)", lambda x: _vezes(x["multiplo_do_fluxo"]), "")))
            + "</table>")
-    bloco_cen = ('<div class="legenda-graf">Valor da empresa por cenário</div>' + barras + tab
+    bloco_cen = (tab
                  + '<div class="nota">R$ mil. Valor da operação = caixa projetado trazido a valor presente; somado ao '
                    'caixa que a empresa tem hoje, dá o valor da empresa. Cada cenário vira uma ponta da faixa de ida a '
                    'mercado: conservador = mínimo, base = recomendado, otimista = máximo.</div>')
@@ -784,10 +820,9 @@ def cap5_valuation(c: dict) -> str:
     marcadores = [("Ida a mercado recomendada", alvo, True)]
     if c.get("pedido_vendedor"):
         marcadores.append(("Pedido do vendedor", c["pedido_vendedor"], False))
-    nota_ff = ("Todos os métodos em valor de ida a mercado, com o caixa da empresa dentro: o total que o comprador "
-               "paga, somando as dívidas que assume. O valor recomendado é o fluxo de caixa no cenário base; a "
-               "liquidação dos ativos é o piso. Tracejados, só referência: o múltiplo de EBITDA vale para "
-               "empresas maiores e com menos risco, e os ativos a mercado só se realizam se a operação for encerrada.")
+    nota_ff = ("Todos os métodos em valor de ida a mercado, com o caixa da empresa dentro. Vale o fluxo de caixa no "
+               "cenário base; a liquidação dos ativos é o piso. Tracejados, só referência: o múltiplo de EBITDA vale "
+               "para empresas maiores, e os ativos a mercado só se realizam se a operação for encerrada.")
     ff = _secao("Faixas de valor por método", "faixa", g.football_field(faixas, marcadores)
                 + f'<div class="nota">{escape(nota_ff)}</div>')
 
@@ -824,20 +859,23 @@ def cap5_valuation(c: dict) -> str:
         ponte.append(("Payback", f'{pb:.2f}'.replace(".", ",") + "&nbsp;anos",
                       f"régua da casa: até {str(rp['maximo']['anos']).replace('.', ',')} anos" if rp.get("maximo") else ""))
     tab_preco = ('<table class="compacta">' + "".join(
-        f"<tr class='{'total' if obs == 'total' else ''}'><td>{escape(rot)}</td><td class='n'>{val}</td>"
-        f"<td class='obs-cel'>{escape('' if obs == 'total' else obs)}</td></tr>" for rot, val, obs in ponte)
+        f"<tr class='{'total' if obs == 'total' else ''}'><td>{escape(rot)}</td><td class='n'>{val}</td></tr>"
+        for rot, val, obs in ponte)  # sem coluna de observações (11/11/2026)
         + '</table><div class="nota">R$ mil. Vale o fluxo de caixa no cenário base; a liquidação dos ativos só vale se '
           'ficar acima dele. A proteção do comprador está no cenário conservador (taxa maior, sem crescimento) e na '
           'régua da casa. Payback = anos de caixa para recuperar a ida a mercado, descontado o caixa que vem com a '
           'empresa.</div>')
     bloco_sens = bloco_sens or '<div class="nota nd">Não se aplica: sem caixa sustentável positivo.</div>'
+    # ordem do capítulo (11/11/2026): premissas → projeção → do valor à ida a mercado → cenários e sensibilidade →
+    # ativos da empresa → faixas por método → quanto vira o investimento → leitura do valuation (conclusão)
+    h.append(_secao("Do valor à ida a mercado", "valor", tab_preco))
     if sem_caixa:
-        h += [ff, '<div class="duas">', _secao("Sensibilidade", "relogio", bloco_sens),
-              _secao("Do valor à ida a mercado", "valor", tab_preco), '</div>']
+        h.append(_secao("Sensibilidade", "relogio", bloco_sens))
     else:
         h += ['<div class="duas">', _secao("Cenários", "faixa", bloco_cen),
-              '<div>' + _secao("Do valor à ida a mercado", "valor", tab_preco) + _secao("Sensibilidade", "relogio", bloco_sens)
-              + '</div>', '</div>', ff]
+              _secao("Sensibilidade", "relogio", bloco_sens), '</div>']
+    h.append(_secao("Ativos da empresa", "empresa", _bloco_ativos((c.get("financeiro") or {}).get("ativos"))))
+    h.append(ff)
 
     # quanto vira o investimento, ano a ano
     ev = _evolucao_inv(c)
@@ -855,18 +893,17 @@ def cap5_valuation(c: dict) -> str:
             + "</tr>")
         tab_ev = ('<table class="compacta"><tr><th>R$ mil</th><th class="n">Empresa</th><th class="n">Selic</th>'
                   f'<th class="n">IPCA+</th></tr>{linhas_ev}</table>')
-        nota_ev = (f"Desembolso do comprador: {g.brl_compacto(ev['desembolso'])}, o valor de ida a mercado (parte do "
-                   "sócio + dívidas assumidas)"
+        nota_ev = (f"Desembolso do comprador: {g.brl_compacto(ev['desembolso'])}, o valor de ida a mercado"
                    + (f"; o caixa de {g.brl_compacto(ev['caixa_empresa'])} que vem com a empresa é reinvestido na "
                       "Selic desde o primeiro dia" if ev.get("caixa_empresa") else "") + ". "
-                   "Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo nosso DCF (ou os ativos a mercado, se valerem mais); o retorno da "
-                   "empresa é a TIR do negócio. A renda fixa é garantida, o caixa da empresa não: a diferença é o "
-                   f"prêmio pelo risco. IPCA+ com juro real de {pct(c.get('juro_real', 0.06))} a.a.; Selic e IPCA "
-                   "esperados pela Focus/BCB. Entre parênteses, o ganho acumulado.")
+                   "Empresa = caixa gerado, reinvestido na Selic, + valor da empresa pelo DCF; o retorno é a TIR do "
+                   f"negócio, e a diferença para a renda fixa é o prêmio pelo risco. IPCA+ com juro real de "
+                   f"{pct(c.get('juro_real', 0.06))} a.a.; Selic e IPCA pela Focus/BCB.")
         h.append(_secao("Quanto vira o investimento", "retorno",
                         '<div class="duas"><div><div class="legenda-graf">Valor acumulado do mesmo desembolso (R$)</div>'
                         + g.linhas_evolucao(ev["anos"], series) + f'</div><div>{tab_ev}</div></div>'
                         + f'<div class="nota">{escape(nota_ev)}</div>'))
+    h.append(_quadro("Leitura do valuation", "valor", _p(t["leitura_valuation"]), "destaque"))
     h.append('</section>')
     return "".join(h)
 
@@ -927,17 +964,31 @@ def cap6_transacao(c: dict) -> str:
         # quanto sobra para o dono
         dm = [i for i, x in enumerate(cen) if x["chave"] == "mercado"][0]
         cols = "".join(f"<th class='n'>{escape(x['nome'])}</th>" for x in cen)
-        rot_div = "(−) Dívidas da empresa"
+        # descontos antes da parte do sócio (11/11/2026): comissão, fornecedores vencidos, bancários, tributários,
+        # trabalhistas e rescisão (condicional, entre parênteses e fora da soma); sócios e prováveis quando houver
+        traco = lambda x: _mil(-x) if abs(x) >= 1 else "—"  # noqa: E731
+        comp = lambda x, k: (x.get("divida_componentes") or {}).get(k, 0.0)  # noqa: E731
+        cred = [x.get("credito_vendedor") or 0.0 for x in cen]
         linhas = [_linha_tab("Valor de ida a mercado (bruto)", [_mil(x["bruto"]) for x in cen], "sub", dm),
                   _linha_tab("(−) Comissão ND", [_mil(-x["comissao"]) + f" <small>({x['comissao'] / x['bruto'] * 100:.0f}%)</small>"
                                                 if x["bruto"] else "—" for x in cen], "", dm),
-                  _linha_tab(rot_div, [_mil(-x["divida"]) for x in cen], "", dm)]
+                  _linha_tab("(−) Fornecedores (vencidos ou renegociados)",
+                             [traco(x.get("fornecedores_vencidos") or 0.0) for x in cen], "", dm),
+                  _linha_tab("(−) Passivos bancários", [traco(comp(x, "bancarios")) for x in cen], "", dm),
+                  _linha_tab("(−) Passivos tributários (parcelamentos)", [traco(comp(x, "tributarios")) for x in cen], "", dm),
+                  _linha_tab("(−) Passivos trabalhistas (férias, 13º e encargos)",
+                             [traco(x.get("trabalhistas") or 0.0) for x in cen], "", dm),
+                  _linha_tab("(−) Rescisão de funcionários",
+                             [f"({_mil(x['rescisao_condicional'])}) <small>condicional</small>"
+                              if x.get("rescisao_condicional") else "—" for x in cen], "", dm)]
+        if any(comp(x, "socios") - c >= 1 for x, c in zip(cen, cred)):
+            linhas.append(_linha_tab("(−) Dívidas com sócios", [traco(comp(x, "socios") - c) for x, c in zip(cen, cred)], "", dm))
         if any(x["passivos"] for x in cen):
             linhas.append(_linha_tab("(−) Fornecedores e obrigações", [_mil(-x["passivos"]) for x in cen], "", dm))
-        linhas.append(_linha_tab("(−) Contingências prováveis (jurídico)",
-                                 [_mil(-x["provaveis"]) if x["provaveis"] else "—" for x in cen], "", dm))
-        linhas.append(_linha_tab("= Parte do sócio, já sem a comissão", [_mil(x["preco_cotas"] - x["comissao"]) for x in cen],
-                                 "sub", dm))
+        if any(x["provaveis"] for x in cen):
+            linhas.append(_linha_tab("(−) Contingências prováveis (jurídico)", [traco(x["provaveis"]) for x in cen], "", dm))
+        linhas.append(_linha_tab("= Parte do sócio, já sem a comissão",
+                                 [_mil(x["preco_cotas"] - x["comissao"] + c) for x, c in zip(cen, cred)], "sub", dm))
         linhas.append(_linha_tab("(−) IR sobre o ganho de capital" + ("" if cen[0]["custo_informado"] else "*"),
                                  [_mil(-x["ir"]) for x in cen], "", dm))
         linhas.append(_linha_tab("= Sobra para o dono", [f"<b>{_mil(x['sobra'])}</b>" for x in cen], "total", dm))
@@ -952,15 +1003,23 @@ def cap6_transacao(c: dict) -> str:
         if not cen[0]["custo_informado"]:
             nota_s += (" *Custo de aquisição das cotas não informado: considerado zero, então o IR real tende a "
                        "ser menor (pedir a declaração de IR do sócio).")
-        nota_s += (" O valor bruto já inclui o caixa da empresa, que fica com o comprador. Fornecedores e "
-                   "obrigações do dia a dia continuam na operação e não saem do valor.")
+        if any(cred):
+            nota_s += (f" As dívidas da empresa com o próprio sócio ({g.brl_compacto(max(cred))}: dividendos a pagar e "
+                       "haveres) não entram como desconto: a empresa as quita com ele na venda, sem IR de ganho de capital.")
+        if cen[0].get("rescisao_condicional"):
+            nota_s += (" Rescisão entre parênteses: passivo condicional, fora da soma; só pesa se houver desligamentos"
+                       + (f" ({cen[0]['rescisao_base']})" if cen[0].get("rescisao_base") else "") + ".")
+        nota_s += (" O valor bruto já inclui o caixa da empresa, que fica com o comprador. Contas a pagar dentro do "
+                   "prazo (fornecedores, impostos do mês) ficam na operação, no capital de giro; só saem do valor os "
+                   "passivos vencidos, postergados ou renegociados.")
         aviso = ""
-        pesados = [x for x in cen if x["preco_cotas"] <= 0 or x["comissao"] / x["preco_cotas"] > 0.3]
+        recebe = lambda x: x["preco_cotas"] + (x.get("credito_vendedor") or 0.0)  # noqa: E731
+        pesados = [x for x in cen if recebe(x) <= 0 or x["comissao"] / recebe(x) > 0.3]
         if pesados:
             x = next((y for y in pesados if y["chave"] == "mercado"), pesados[-1])
             aviso = (f"No cenário {x['nome'].lower()}, a comissão de {g.brl_compacto(x['comissao'])} "
-                     + ("é maior que a parte do sócio" if x["sobra"] < 0 or x["preco_cotas"] <= 0
-                        else f"consome {x['comissao'] / x['preco_cotas']:.0%} da parte do sócio")
+                     + ("é maior que a parte do sócio" if x["sobra"] < 0 or recebe(x) <= 0
+                        else f"consome {x['comissao'] / recebe(x):.0%} da parte do sócio")
                      + ": avaliar com o sócio se a ida a mercado compensa, ou outra forma de remuneração da ND.")
             aviso = f'<div class="aviso">{escape(aviso)}</div>'
         h.append(_secao("Quanto sobra para o dono", "divida",
