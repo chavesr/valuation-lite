@@ -57,6 +57,9 @@ class Contingencia(BaseModel):
     classificacao: Classificacao
     fonte: str
     nota: str | None = None
+    # natureza (11/11/2026): "trabalhista" (processos de funcionários) | "tributaria" | "civel" — o quadro do dono
+    # mostra as trabalhistas na linha "Passivos trabalhistas (processos)" e as demais em "Contingências prováveis"
+    natureza: str | None = None
 
     @property
     def valor(self) -> float:  # o que sai do valor do patrimônio
@@ -92,6 +95,7 @@ class ResultadoValuation(BaseModel):
     # sem ser dívida (fornecedores vencidos/renegociados, trabalhista acumulado) — o quadro do dono mostra um a um
     divida_componentes: dict[str, float] = Field(default_factory=dict)
     passivos_desconto: dict[str, float] = Field(default_factory=dict)
+    rescisao_base: str | None = None  # como a rescisão até a data da venda foi calculada (valuation_decisoes.json)
     risco: ResultadoRisco
     notas: dict[str, NotaDimensao]
     perpetuidade: bool
@@ -157,7 +161,14 @@ def crescimento_historico(dres: list[DREEconomica]) -> float | None:
     return round((b / a) ** (1 / n) - 1, 4)
 
 
-def liquidacao(dados, p: dict, criterio: str = "piso_patrimonial") -> tuple[float | None, float | None]:
+def _trabalhista(bp, rescisao: float | None) -> float:
+    """Passivo com os funcionários até a data da venda (11/11/2026): a rescisão calculada, quando informada, já inclui
+    as férias, o 13º e os encargos provisionados no balanço — substitui as obrigações trabalhistas, sem somar as duas."""
+    return rescisao if rescisao is not None else (bp.obrigacoes_trabalhistas or 0) if bp else 0.0
+
+
+def liquidacao(dados, p: dict, criterio: str = "piso_patrimonial",
+               rescisao: float | None = None) -> tuple[float | None, float | None]:
     """→ (piso patrimonial, valor de liquidação dos ativos operacionais).
     Piso = ativos a valor de realização − todos os passivos conhecidos (valor mínimo para o sócio hoje).
     Operacional = recebíveis + estoque + imobilizado a valor de realização − fornecedores e obrigações (sem caixa nem
@@ -168,10 +179,13 @@ def liquidacao(dados, p: dict, criterio: str = "piso_patrimonial") -> tuple[floa
     h = p[criterio]
     operacionais = ((bp.contas_receber or 0) * h["contas_receber"] + (bp.estoques or 0) * h["estoques"]
                     + (bp.imobilizado_liquido or 0) * h["imobilizado"])
-    passivos_op = sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_trabalhistas, bp.obrigacoes_fiscais))
+    passivos_op = sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_fiscais)) + _trabalhista(bp, rescisao)
     dividas = sum(x or 0 for x in (bp.parcelamentos_fiscais, bp.emprestimos_cp, bp.emprestimos_lp, bp.mutuos_socios))
     piso = (bp.caixa_aplicacoes or 0) * h["caixa"] + operacionais - passivos_op - dividas
-    return round(piso, 2), round(max(operacionais - passivos_op, 0.0), 2)
+    # o operacional (valor terminal do fluxo, no fim do horizonte) fica com o trabalhista do balanço: a rescisão de hoje
+    # é do vendedor e já sai da parte do sócio — levá-la ao terminal descontaria duas vezes
+    passivos_bp = sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_fiscais)) + _trabalhista(bp, None)
+    return round(piso, 2), round(max(operacionais - passivos_bp, 0.0), 2)
 
 
 def criterio_piso(piso_usado: str) -> str:
@@ -188,9 +202,9 @@ def ativos_brutos(dados, p: dict, criterio: str = "patrimonio_mercado") -> float
                  + (bp.estoques or 0) * h["estoques"] + (bp.imobilizado_liquido or 0) * h["imobilizado"], 2)
 
 
-def passivos_operacionais(dados) -> float:
+def passivos_operacionais(dados, rescisao: float | None = None) -> float:
     bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
-    return sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_trabalhistas, bp.obrigacoes_fiscais)) if bp else 0.0
+    return sum(x or 0 for x in (bp.fornecedores, bp.obrigacoes_fiscais)) + _trabalhista(bp, rescisao) if bp else 0.0
 
 
 def carga_efetiva_atual(dados, base: DREEconomica) -> tuple[float, str]:
@@ -221,13 +235,13 @@ def contingencias(dados, base: DREEconomica, p: dict, decisoes: dict | None = No
                                 descricao=f"Tributos sobre receita não declarada ({r['anos']} anos não prescritos, "
                                           f"carga de {aliq:.1%})",
                                 valor_bruto=round(anual * r["anos"], 2), classificacao=r["classificacao"],
-                                fonte=f"receita econômica × declarada; {fonte_aliq}"))
+                                fonte=f"receita econômica × declarada; {fonte_aliq}", natureza="tributaria"))
     pj = (getattr(dados, "erp", None) or {}).get("pj_total_mensal")
     if pj:
         r = c["pj"]
         out.append(Contingencia(id="pj", descricao=f"Vínculo de emprego dos PJ ({r['anos']} anos de encargos)",
                                 valor_bruto=round(pj * 12 * 0.5 * r["anos"], 2), classificacao=r["classificacao"],
-                                fonte="planilha de colaboradores PJ"))
+                                fonte="planilha de colaboradores PJ", natureza="trabalhista"))
     for k, dec in (decisoes or {}).items():
         if k.startswith("_"):
             continue
@@ -238,10 +252,12 @@ def contingencias(dados, base: DREEconomica, p: dict, decisoes: dict | None = No
             if dec.get("valor_bruto") is not None:
                 atual.valor_bruto = float(dec["valor_bruto"])
             atual.nota = dec.get("nota")
+            if dec.get("natureza"):
+                atual.natureza = dec["natureza"]
         elif dec.get("descricao") and dec.get("valor_bruto") is not None and dec.get("classificacao"):
             out.append(Contingencia(id=k, descricao=dec["descricao"], valor_bruto=float(dec["valor_bruto"]),
                                     classificacao=dec["classificacao"], fonte=dec.get("fonte") or "analista",
-                                    nota=dec.get("nota")))
+                                    nota=dec.get("nota"), natureza=dec.get("natureza")))
     return out
 
 
@@ -309,8 +325,11 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
             p: dict | None = None, decisoes_contingencias: dict | None = None,
             piso_escolhido: str = "liquidacao", crescimento_informado: dict | None = None,
-            fornecedores_vencidos: float | None = None, recuperacao: dict | None = None) -> ResultadoValuation:
-    """`recuperacao`: saída de margens_recuperacao (cenários com a margem voltando ao melhor ano recente)."""
+            fornecedores_vencidos: float | None = None, recuperacao: dict | None = None,
+            rescisao: dict | None = None) -> ResultadoValuation:
+    """`recuperacao`: saída de margens_recuperacao (cenários com a margem voltando ao melhor ano recente).
+    `rescisao`: {valor, base} — rescisão de todos os funcionários na data da venda (o comprador só responde pelo
+    tempo de casa a partir da compra); substitui as obrigações trabalhistas do balanço."""
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
@@ -323,8 +342,10 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     perp, motivo = teste_perpetuidade(dados, notas, risco, gci, p)
     bruta, caixa, fonte_div = divida_liquida(dados)
     conts = contingencias(dados, base, p, decisoes_contingencias)
-    piso_liq, liquidacao_operacional = liquidacao(dados, p)
-    piso_merc, _ = liquidacao(dados, p, "patrimonio_mercado")
+    resc = (rescisao or {}).get("valor")
+    resc = float(resc) if resc is not None else None
+    piso_liq, liquidacao_operacional = liquidacao(dados, p, rescisao=resc)
+    piso_merc, _ = liquidacao(dados, p, "patrimonio_mercado", rescisao=resc)
     piso = piso_merc if piso_escolhido == "mercado" and piso_merc is not None else piso_liq
     bp_ult = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
     componentes = {"bancarios": round(bruta - sum(x or 0 for x in (bp_ult.parcelamentos_fiscais, bp_ult.mutuos_socios)), 2)
@@ -332,10 +353,10 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                    "tributarios": (bp_ult.parcelamentos_fiscais or 0.0) if bp_ult else 0.0,
                    "socios": (bp_ult.mutuos_socios or 0.0) if bp_ult else 0.0}
     # passivos que não são dívida mas saem da parte do sócio (11/11/2026): fornecedores vencidos ou renegociados
-    # (informados pelo analista; contas a pagar no prazo ficam no giro) e o trabalhista acumulado do último balanço
-    # (férias, 13º e encargos a pagar até a venda)
-    pdesc = {"fornecedores": round(fornecedores_vencidos or 0.0, 2),
-             "trabalhistas": round((bp_ult.obrigacoes_trabalhistas or 0.0) if bp_ult else 0.0, 2)}
+    # (informados pelo analista; contas a pagar no prazo ficam no giro) e a rescisão dos funcionários até a data da
+    # venda (o comprador só responde a partir da compra). As férias, o 13º e os encargos provisionados no balanço já
+    # estão dentro da rescisão e não descontam à parte; processos trabalhistas são contingências (natureza trabalhista)
+    pdesc = {"fornecedores": round(fornecedores_vencidos or 0.0, 2), "rescisao": round(resc or 0.0, 2)}
     pd_total = sum(pdesc.values())
     ajuste_patrimonio = -(bruta - caixa) - sum(c.valor for c in conts) - pd_total
     cr = p["crescimento"]
@@ -351,7 +372,8 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                            piso_usado="mercado" if piso is not None and piso == piso_merc and piso_escolhido == "mercado"
                            else "liquidacao",
                            retencao_sugerida=round(sum(c.retencao for c in conts), 2),
-                           divida_componentes=componentes, passivos_desconto=pdesc, recuperacao_margem=recuperacao)
+                           divida_componentes=componentes, passivos_desconto=pdesc, recuperacao_margem=recuperacao,
+                           rescisao_base=(rescisao or {}).get("base") if resc else None)
     ativos_liquidos = liquidacao_operacional or 0.0  # valor terminal (firma) no cenário base/otimista
     mult_vt = p["valor_terminal"]["multiplo_do_fluxo"]
     sinal = 1 if fluxo > 0 else -1  # com fluxo negativo, taxa maior daria valor menos negativo: inverte
@@ -401,7 +423,7 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     # o piso é a liquidação ordenada dos ativos. Os ativos a mercado viram só referência para a negociação.
     r.ativos_mercado = ativos_brutos(dados, p)
     provaveis = sum(c.valor for c in conts)
-    passivos_op = passivos_operacionais(dados)
+    passivos_op = passivos_operacionais(dados, resc)
     do_piso_liq = piso is not None and r.preco_recomendado > 0 and abs(r.preco_recomendado - max(piso, 0.0)) < 1 \
         and (fluxo <= 0 or piso >= base_c.valor_patrimonio)
     # 10/11/2026 (GSD): com dívida maior que o valor, a parte do sócio é negativa nos dois métodos; a liquidação ainda
@@ -416,7 +438,7 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                                  else "ativos a mercado (piso)")
         r.ponte_dono = [("Ativos a valor de realização (inclui o caixa)", max(r.preco_recomendado, piso) + bruta + passivos_op),
                         ("(−) Fornecedores e obrigações", -passivos_op), ("(−) Dívida bruta", -bruta)]
-        pd_total_ponte = 0.0  # na liquidação, os passivos já saem dentro de fornecedores e obrigações
+        pd_total_ponte = 0.0  # na liquidação, os passivos (e a rescisão) já saem dentro de fornecedores e obrigações
     else:
         r.valor_oferta = round(base_c.valor_empresa + caixa, 2)
         r.valor_oferta_origem = "fluxo (DCF) + caixa"
@@ -424,7 +446,7 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                         ("(−) Dívida bruta", -bruta)]
         pd_total_ponte = pd_total
     if pd_total_ponte:
-        r.ponte_dono.append(("(−) Fornecedores vencidos e trabalhista acumulado", -pd_total_ponte))
+        r.ponte_dono.append(("(−) Fornecedores vencidos e rescisão dos funcionários", -pd_total_ponte))
     if provaveis:
         r.ponte_dono.append(("(−) Contingências prováveis", -provaveis))
     if do_piso_liq and bp_ult and r.valor_oferta:

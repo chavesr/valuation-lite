@@ -981,7 +981,7 @@ def cap6_transacao(c: dict) -> str:
         dm = None  # sem coluna destacada (11/11/2026): os três cenários com o mesmo peso
         cols = "".join(f"<th class='n'>{escape(x['nome'])}</th>" for x in cen)
         # descontos antes da parte do sócio (11/11/2026): comissão, fornecedores vencidos, bancários, tributários,
-        # trabalhistas e rescisão (condicional, entre parênteses e fora da soma); sócios e prováveis quando houver
+        # trabalhistas (processos de funcionários) e rescisão até a data da venda; sócios e outras prováveis se houver
         traco = lambda x: _mil(-x) if abs(x) >= 1 else "—"  # noqa: E731
         comp = lambda x, k: (x.get("divida_componentes") or {}).get(k, 0.0)  # noqa: E731
         cred = [x.get("credito_vendedor") or 0.0 for x in cen]
@@ -992,17 +992,18 @@ def cap6_transacao(c: dict) -> str:
                              [traco(x.get("fornecedores_vencidos") or 0.0) for x in cen], "", dm),
                   _linha_tab("(−) Passivos bancários", [traco(comp(x, "bancarios")) for x in cen], "", dm),
                   _linha_tab("(−) Passivos tributários (parcelamentos)", [traco(comp(x, "tributarios")) for x in cen], "", dm),
-                  _linha_tab("(−) Passivos trabalhistas (férias, 13º e encargos)",
-                             [traco(x.get("trabalhistas") or 0.0) for x in cen], "", dm),
-                  _linha_tab("(−) Rescisão de funcionários",
-                             [f"({_mil(x['rescisao_condicional'])}) <small>condicional</small>"
-                              if x.get("rescisao_condicional") else "—" for x in cen], "", dm)]
+                  _linha_tab("(−) Passivos trabalhistas (processos)",
+                             [traco(x.get("provaveis_trabalhistas") or 0.0) for x in cen], "", dm),
+                  _linha_tab("(−) Rescisão dos funcionários (até a venda)",
+                             [traco(x.get("rescisao") or 0.0) for x in cen], "", dm)]
         if any(comp(x, "socios") - c >= 1 for x, c in zip(cen, cred)):
             linhas.append(_linha_tab("(−) Dívidas com sócios", [traco(comp(x, "socios") - c) for x, c in zip(cen, cred)], "", dm))
         if any(x["passivos"] for x in cen):
             linhas.append(_linha_tab("(−) Fornecedores e obrigações", [_mil(-x["passivos"]) for x in cen], "", dm))
-        if any(x["provaveis"] for x in cen):
-            linhas.append(_linha_tab("(−) Contingências prováveis (jurídico)", [traco(x["provaveis"]) for x in cen], "", dm))
+        if any(x["provaveis"] - (x.get("provaveis_trabalhistas") or 0.0) >= 1 for x in cen):
+            linhas.append(_linha_tab("(−) Contingências prováveis (tributárias e cíveis)",
+                                     [traco(x["provaveis"] - (x.get("provaveis_trabalhistas") or 0.0)) for x in cen],
+                                     "", dm))
         linhas.append(_linha_tab("= Parte do sócio, já sem a comissão",
                                  [_mil(x["preco_cotas"] - x["comissao"] + c) for x, c in zip(cen, cred)], "sub", dm))
         linhas.append(_linha_tab("(−) IR sobre o ganho de capital" + ("" if cen[0]["custo_informado"] else "*"),
@@ -1022,8 +1023,12 @@ def cap6_transacao(c: dict) -> str:
         if any(cred):
             nota_s += (f" As dívidas da empresa com o próprio sócio ({g.brl_compacto(max(cred))}: dividendos a pagar e "
                        "haveres) não entram como desconto: a empresa as quita com ele na venda, sem IR de ganho de capital.")
-        if cen[0].get("rescisao_condicional"):
-            nota_s += (" Rescisão entre parênteses: passivo condicional, fora da soma; só pesa se houver desligamentos"
+        nota_s += (" Passivos trabalhistas: processos de funcionários julgados, em acordo ou com perda provável (os de "
+                   "perda possível vão para a retenção).")
+        if cen[0].get("rescisao"):
+            nota_s += (" Rescisão: o comprador só responde pelo tempo de casa a partir da compra, então a rescisão "
+                       "acumulada até a venda (férias, 13º, multa do FGTS e aviso prévio) fica com o vendedor; já inclui "
+                       "as férias, o 13º e os encargos provisionados no balanço"
                        + (f" ({cen[0]['rescisao_base']})" if cen[0].get("rescisao_base") else "") + ".")
         nota_s += (" O valor bruto já inclui o caixa da empresa, que fica com o comprador. Contas a pagar dentro do "
                    "prazo (fornecedores, impostos do mês) ficam na operação, no capital de giro; só saem do valor os "

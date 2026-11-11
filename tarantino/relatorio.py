@@ -115,9 +115,13 @@ def fatos_compactos(pasta: Path) -> str:
                 linhas.append(f"- A empresa não tem dívida (endividamento zero). Os {_r(v['haveres_fora_da_divida'])} de "
                               "haveres de sócio que aparecem no balanço são lançamento contábil e ficam fora do valuation, "
                               "por decisão do analista: não os cite como dívida")
-            if m.get("rescisao_condicional"):
-                linhas.append(f"- Passivo trabalhista condicional (NÃO descontado do valor): se houver desligamentos, a "
-                              f"rescisão de todos os CLT custaria até {_r(m['rescisao_condicional'])} (estimativa)")
+            if m.get("rescisao"):
+                linhas.append(f"- Rescisão dos funcionários até a data da venda: {_r(m['rescisao'])}, descontada da parte "
+                              "do sócio (o comprador só responde pelo tempo de casa a partir da compra; já inclui férias, "
+                              "13º e encargos provisionados)" + (f" — {m['rescisao_base']}" if m.get("rescisao_base") else ""))
+            if m.get("provaveis_trabalhistas"):
+                linhas.append(f"- Passivos trabalhistas (processos de funcionários com perda provável ou julgados): "
+                              f"{_r(m['provaveis_trabalhistas'])}, descontados da parte do sócio")
             if m.get("credito_vendedor"):
                 linhas.append(f"- Das dívidas da empresa, {_r(m['credito_vendedor'])} são devidas ao próprio sócio "
                               "vendedor (dividendos a pagar/mútuo): saem do valor, mas voltam para ele na quitação e "
@@ -335,7 +339,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                   "leituras": calc_fin.leituras_verticais(qual),
                   "transacao": calc_tr.montar(dados, v, fin, _param_valuation(dados, saida), dres),
                   "ativos": calc_fin.ativos_empresa(dados, json.loads(_ler(saida / "ativos.json") or "{}"),
-                                                    _param_valuation(dados, saida)),
+                                                    _param_valuation(dados, saida),
+                                                    (v.get("passivos_desconto") or {}).get("rescisao") or None),
                   "projecao": calc_fin.projecao_dre(dres, v, hoje.year)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,

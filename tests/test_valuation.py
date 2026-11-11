@@ -231,3 +231,32 @@ def test_recuperacao_de_margem_parte_do_realizado_e_volta_ao_melhor_ano():
     assert com.recuperacao_margem == rec
     with pytest.raises(ValueError):
         margens_recuperacao(dres, {"de": "LTM x", "alvo": anterior.periodo}, p)
+
+
+def test_rescisao_ate_a_venda_desconta_e_substitui_o_trabalhista_do_balanco():
+    """11/11/2026: o comprador só responde pelo tempo de casa a partir da compra — a rescisão acumulada até a venda
+    sai da parte do sócio e já inclui férias/13º/encargos provisionados (sem somar os dois); processos trabalhistas
+    são contingências de natureza trabalhista. A ida a mercado não muda."""
+    import datetime
+    from relatorio.transacao import cenarios_dono
+    dados = _dados()
+    dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
+                                   caixa_aplicacoes=100_000, contas_receber=200_000, estoques=300_000,
+                                   imobilizado_liquido=100_000, fornecedores=150_000, obrigacoes_trabalhistas=20_000,
+                                   proveniencia=PROV)]
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094)
+    dec = {"proc": {"descricao": "Processo trabalhista julgado", "valor_bruto": 30_000, "classificacao": "provavel",
+                    "natureza": "trabalhista", "fonte": "ficha"}}
+    sem = avaliar(dados, dres, None, risco, notas, None, dec)
+    com = avaliar(dados, dres, None, risco, notas, None, dec, rescisao={"valor": 90_000, "base": "estimativa"})
+    assert "trabalhistas" not in sem.passivos_desconto and sem.passivos_desconto["rescisao"] == 0
+    assert com.passivos_desconto["rescisao"] == 90_000 and com.rescisao_base == "estimativa"
+    assert com.base.valor_patrimonio == pytest.approx(sem.base.valor_patrimonio - 90_000, abs=1)
+    assert com.valor_oferta == pytest.approx(sem.valor_oferta, abs=1)
+    assert com.piso_patrimonial == pytest.approx(sem.piso_patrimonial - 70_000, abs=1)  # 90 mil no lugar dos 20 mil
+    from relatorio.transacao import PADRAO
+    cen = cenarios_dono(com.model_dump(), dados, None, {**PADRAO, **carregar_parametros()})
+    m = next(x for x in cen if x["chave"] == "mercado")
+    assert m["rescisao"] == 90_000 and m["provaveis_trabalhistas"] == 30_000 and m["provaveis"] == 30_000

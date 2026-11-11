@@ -181,8 +181,15 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
                         "haveres_socios_fora_da_divida: {ativo, motivo} — dívida com sócio/ex-sócio que é só lançamento "
                         "contábil: sai da dívida (Score, ponte e liquidação). · fornecedores_vencidos: {valor, fonte} — "
                         "passivo com fornecedores vencido, postergado ou renegociado, em R$ (contas a pagar no prazo ficam "
-                        "no giro); desconta da parte do sócio.")
+                        "no giro); desconta da parte do sócio. · rescisao: {valor, base} — rescisão de todos os "
+                        "funcionários na data da venda (férias vencidas e proporcionais + 1/3, 13º proporcional, multa "
+                        "de 40% do FGTS e aviso prévio), em R$: o comprador só responde pelo tempo de casa a partir da "
+                        "compra, então desconta da parte do sócio e substitui as obrigações trabalhistas do balanço.")
     dec_val.setdefault("fornecedores_vencidos", {"valor": None, "fonte": None})
+    if "rescisao" not in dec_val:  # 11/11/2026: migra a antiga rescisão condicional da finalidade.json
+        antiga = (json.loads((saida / "finalidade.json").read_text(encoding="utf-8")).get("rescisao_condicional")
+                  if (saida / "finalidade.json").exists() else None)
+        dec_val["rescisao"] = antiga or {"valor": None, "base": None}
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
     # 11/11/2026 (IBRATE): o analista fixa os períodos que formam o lucro sustentável e o crescimento, quando o
     # exercício contábil não representa a operação (ex.: contabilidade com só 1/3 da receita). Os demais períodos
@@ -198,7 +205,7 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"],
                         crescimento_informado=dec_val.get("crescimento_historico"),
                         fornecedores_vencidos=(dec_val.get("fornecedores_vencidos") or {}).get("valor"),
-                        recuperacao=recuperacao)
+                        recuperacao=recuperacao, rescisao=dec_val.get("rescisao"))
     if haveres:
         resultado.haveres_fora_da_divida = haveres
         resultado.alertas.append(f"Haveres de sócio de R$ {brl(haveres, 0)} fora da dívida por decisão do analista "
@@ -213,9 +220,10 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
     resultado.aviso_mercado = aviso_mercado
     for c in resultado.contingencias:  # Checkpoint: o analista reclassifica, corrige ou acrescenta
         dec_cont.setdefault(c.id, {"descricao": c.descricao, "valor_calculado": c.valor_bruto,
-                                   "classificacao": None, "valor_bruto": None, "nota": None})
-    dec_cont.setdefault("_leia", "classificacao: provavel (desconta) | possivel (retenção) | remota (ignora). "
-                                  "Para acrescentar: nova chave com descricao, valor_bruto, classificacao e fonte.")
+                                   "classificacao": None, "valor_bruto": None, "nota": None, "natureza": c.natureza})
+    dec_cont["_leia"] = ("classificacao: provavel (desconta) | possivel (retenção) | remota (ignora). natureza: "
+                         "trabalhista (processos de funcionários: julgados, em acordo ou em andamento) | tributaria | "
+                         "civel. Para acrescentar: nova chave com descricao, valor_bruto, classificacao, natureza e fonte.")
     arq_cont.write_text(json.dumps(dec_cont, indent=2, ensure_ascii=False), encoding="utf-8")
 
     estado = ler_estado(pasta)

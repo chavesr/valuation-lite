@@ -408,7 +408,7 @@ ATIVOS = (("imoveis", "Imóveis"), ("veiculos", "Veículos"), ("maquinas_equipam
           ("moveis_informatica", "Móveis e informática"), ("estoques", "Estoque"), ("contas_receber", "Contas a receber"))
 
 
-def ativos_empresa(dados, ativos: dict | None, p: dict) -> dict:
+def ativos_empresa(dados, ativos: dict | None, p: dict, rescisao: float | None = None) -> dict:
     """Aba 'Ativos da empresa': só Ativo | Valor, o valor de venda a mercado de cada bem (decisão de 11/11/2026).
     Valor = `valor_mercado` do _valuation/ativos.json (relação de bens, preenchida pelo analista); sem ele, o valor
     contábil × o percentual de patrimonio_mercado (imobilizado 100%, estoque 90%, receber 95%); sem nenhum, n/d.
@@ -427,13 +427,13 @@ def ativos_empresa(dados, ativos: dict | None, p: dict) -> dict:
         if valor is None and contabil is not None:
             valor = contabil * hm.get(chave if chave in ("estoques", "contas_receber") else "imobilizado", 1.0)
         linhas.append({"nome": nome, "valor": valor, "fora": bool(it.get("fora_da_venda"))})
-    pt = ponte_liquidacao(bp, p.get("piso_patrimonial") or {})
+    pt = ponte_liquidacao(bp, p.get("piso_patrimonial") or {}, rescisao)
     return {"linhas": linhas, "total": sum(x["valor"] for x in linhas if x["valor"] is not None and not x["fora"]),
             "fonte": (ativos or {}).get("fonte"), "piso": pt["piso"] if pt else None,
             "data_base": pt["data_base"] if pt else None}
 
 
-def ponte_liquidacao(bp, h: dict) -> dict | None:
+def ponte_liquidacao(bp, h: dict, rescisao: float | None = None) -> dict | None:
     """Do balanço ao piso de liquidação (11/11/2026, IBRATE): mesma conta de engine.valuation.liquidacao, linha a
     linha, para a seção 'Ativos da empresa' fechar com o piso usado no preço. Outros ativos do balanço (adiantamentos,
     tributos a recuperar etc., implícitos em PL + passivos − ativos listados) aparecem, mas não entram na liquidação."""
@@ -450,11 +450,15 @@ def ponte_liquidacao(bp, h: dict) -> dict | None:
                 ("Parcelamentos fiscais", v(bp.parcelamentos_fiscais)),
                 ("Empréstimos", v(bp.emprestimos_cp) + v(bp.emprestimos_lp)),
                 ("Mútuos com sócios", v(bp.mutuos_socios))]
+    pas_bp = sum(x for _, x in passivos)  # para os "outros ativos", sempre o passivo do balanço
+    if rescisao:  # 11/11/2026: a rescisão até a venda substitui as obrigações trabalhistas (já as inclui)
+        passivos = [("Rescisão dos funcionários", rescisao) if n == "Obrigações trabalhistas" else (n, x)
+                    for n, x in passivos]
     linhas = [{"nome": n, "contabil": c, "realizacao": round(c * f, 2), "obs": f"{f:.0%} do contábil"}
               for n, c, f in ativos if c]
     outros = None
     if bp.patrimonio_liquido is not None:
-        outros = round(bp.patrimonio_liquido + sum(x for _, x in passivos) - sum(c for _, c, _ in ativos), 2)
+        outros = round(bp.patrimonio_liquido + pas_bp - sum(c for _, c, _ in ativos), 2)
         if abs(outros) >= 1:
             linhas.append({"nome": "Outros ativos do balanço", "contabil": outros, "realizacao": 0.0,
                            "obs": "adiantamentos, tributos a recuperar etc.: não entram"})

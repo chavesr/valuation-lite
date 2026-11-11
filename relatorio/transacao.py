@@ -95,6 +95,9 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
     custo = getattr(fin, "custo_cotas", None)
     credito = min(getattr(fin, "credito_vendedor", None) or 0.0, bruta)  # dívida com o próprio vendedor
     pdesc = v.get("passivos_desconto") or {}
+    # processos trabalhistas (11/11/2026): as contingências prováveis de natureza trabalhista têm linha própria
+    prov_trab = sum(x["valor_bruto"] for x in v.get("contingencias", [])
+                    if x["classificacao"] == "provavel" and x.get("natureza") == "trabalhista")
     comp = v.get("divida_componentes") or {"bancarios": bruta, "tributarios": 0.0, "socios": 0.0}
     out = []
     # nomes dos cenários (11/11/2026): venda forçada / venda a mercado / potencial máximo — sem "recomendado": a ND
@@ -127,11 +130,10 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "liquido_caixa": liquido_caixa,
                     "divida": divida, "divida_bruta": ativos, "divida_componentes": comp,
                     "fornecedores_vencidos": pdesc.get("fornecedores", 0.0),
-                    "trabalhistas": pdesc.get("trabalhistas", 0.0),
+                    "rescisao": pdesc.get("rescisao", 0.0), "rescisao_base": v.get("rescisao_base"),
+                    "provaveis_trabalhistas": prov_trab,
                     "passivos": passivos, "provaveis": prov, "socio": socio, "percentual": pct, "preco_cotas": preco_cotas,
                     "comissao": com, "ir": ir, "custo_informado": custo is not None, "credito_vendedor": credito,
-                    "rescisao_condicional": ((getattr(fin, "rescisao_condicional", None) or {}).get("valor") or 0.0),
-                    "rescisao_base": (getattr(fin, "rescisao_condicional", None) or {}).get("base"),
                     "sobra": preco_cotas - com - ir + credito, "retencao": v.get("retencao_sugerida") or 0.0})
     return out
 
