@@ -50,7 +50,8 @@ def test_valuation_ponta_a_ponta_com_divida_e_piso():
     liquidacao_op = 0.8 * 200_000 + 0.5 * 300_000 + 0.4 * 100_000 - 150_000
     f_base = r.fluxo_base * (1 + base_c.crescimento) ** base_c.anos
     assert base_c.valor_terminal == pytest.approx(max(2.5 * f_base, liquidacao_op), abs=0.01)
-    assert cons.valor_terminal == pytest.approx(max(1.5 * r.fluxo_base, liquidacao_op), abs=0.01)
+    # 11/11/2026: a venda forçada usa o mesmo fluxo da venda a mercado, com a taxa implícita nos 60%
+    assert cons.valor_terminal == pytest.approx(base_c.valor_terminal, abs=0.01) and cons.taxa > base_c.taxa
     assert cons.valor_patrimonio <= base_c.valor_patrimonio <= otim.valor_patrimonio
     assert base_c.valor_patrimonio == pytest.approx(base_c.valor_empresa - 300_000)  # − dívida líquida
     assert r.preco_recomendado == pytest.approx(max(base_c.valor_patrimonio, 0.0))  # opção A: recomendado = base
@@ -190,7 +191,9 @@ def test_padrao_usa_a_liquidacao_como_piso():
     r = avaliar(dados, dres, None, risco, notas)
     assert r.piso_usado == "liquidacao" and r.preco_recomendado >= r.piso_patrimonial - 0.01
     assert r.preco_recomendado < r.patrimonio_mercado
-    assert r.faixa_venda["forcada"] >= min(max(r.piso_patrimonial, 0.0), r.preco_recomendado) - 0.01
+    # 11/11/2026: a venda forçada é 60% da ida a mercado da venda a mercado, sem piso de liquidação
+    off = r.valor_oferta - r.preco_recomendado
+    assert r.faixa_venda["forcada"] + off == pytest.approx(0.6 * r.valor_oferta, abs=1)
 
 
 def test_sinal_receita_acima_da_declarada_so_quando_a_receita_vem_do_caixa():
@@ -201,3 +204,30 @@ def test_sinal_receita_acima_da_declarada_so_quando_a_receita_vem_do_caixa():
     assert "receita acima da declarada" not in propor_notas(dados, None, dres, base)["contingencias"].evidencia
     base.receita_fonte = "caixa (receita acima da declarada comprovada nos extratos)"
     assert "receita acima da declarada" in propor_notas(dados, None, dres, base)["contingencias"].evidencia
+
+
+def test_recuperacao_de_margem_parte_do_realizado_e_volta_ao_melhor_ano():
+    from engine.valuation import fluxos_recuperacao, margens_recuperacao
+    assert fluxos_recuperacao(1_000_000, 0.0, 4, 0.01, 0.07, 3) == [30_000.0, 50_000.0, 70_000.0, 70_000.0]
+    p = carregar_parametros()
+    dados = _dados()
+    dres = normalizar(dados)
+    recente, anterior = dres[0], dres[1]
+    rb0, rb1 = recente.valor("Receita bruta"), anterior.valor("Receita bruta")
+    recente.owner_earnings, anterior.owner_earnings = 0.01 * rb0, 0.11 * rb1
+    rec = margens_recuperacao(dres, {"de": recente.periodo, "alvo": anterior.periodo}, p)
+    m = rec["margens"]
+    assert m["conservador"] == pytest.approx(0.01) and m["otimista"] == pytest.approx(0.11)
+    assert m["base"] == pytest.approx(0.06)  # metade do caminho (fracao_base padrão)
+    notas = propor_notas(dados, None, dres, recente)
+    risco = avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1375)
+    sem = avaliar(dados, [recente], None, risco, notas)
+    com = avaliar(dados, [recente], None, risco, notas, recuperacao=rec)
+    # venda forçada (11/11/2026): 60% da ida a mercado da venda a mercado; a taxa é a implícita nesse valor
+    assert com.cenarios[0].valor_empresa + com.caixa == pytest.approx(0.6 * com.valor_oferta, abs=1)
+    assert com.cenarios[0].taxa > com.cenarios[1].taxa
+    assert com.cenarios[1].valor_empresa > sem.cenarios[1].valor_empresa  # base recupera margem
+    assert com.cenarios[2].valor_empresa > com.cenarios[1].valor_empresa
+    assert com.recuperacao_margem == rec
+    with pytest.raises(ValueError):
+        margens_recuperacao(dres, {"de": "LTM x", "alvo": anterior.periodo}, p)

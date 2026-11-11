@@ -464,7 +464,7 @@ def linhas_evolucao(anos: list[int], series: list[tuple[str, list[float], str]])
     for yy, nome, v in rotulos:
         c.append(f'<text x="{L - dir_ + 7}" y="{yy + 3:.1f}" font-size="8" fill="{TINTA}"><tspan font-weight="700">'
                  f'{escape(brl_compacto(v).replace("R$ ", ""))}</tspan> {escape(nome)}</text>')
-    return _svg(L, A, "".join(c), "Quanto vira o investimento recomendado")
+    return _svg(L, A, "".join(c), "Quanto vira o investimento")
 
 
 # --------------------------------------------------------------------------- capítulo 3 (padrão ND, sóbrio)

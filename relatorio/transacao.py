@@ -81,7 +81,7 @@ def metodos(dados, v: dict, pv: dict) -> dict:
 
 
 def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
-    """Mínimo / a mercado / máximo: do valor bruto de ida a mercado ao que fica com o dono (após comissão e IR)."""
+    """Venda forçada / venda a mercado / potencial máximo: do valor bruto de ida a mercado ao que fica com o dono (após comissão e IR)."""
     nomes = {x["nome"]: x["valor_patrimonio"] for x in v.get("cenarios", [])}
     fv = v.get("faixa_venda") or {"forcada": max(min(nomes.get("conservador", 0.0), v["preco_recomendado"]), 0.0),
                                   "mercado": v["preco_recomendado"],
@@ -97,9 +97,11 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
     pdesc = v.get("passivos_desconto") or {}
     comp = v.get("divida_componentes") or {"bancarios": bruta, "tributarios": 0.0, "socios": 0.0}
     out = []
-    for chave, nome, obs in (("forcada", "Mínimo", "venda forçada · 0 a 6 meses"),
-                             ("mercado", "Recomendado", "venda a mercado · 6 a 18 meses"),
-                             ("maximo", "Máximo", "cenário otimista · comprador estratégico")):
+    # nomes dos cenários (11/11/2026): venda forçada / venda a mercado / potencial máximo — sem "recomendado": a ND
+    # mostra os cenários possíveis, não recomenda valor de ida a mercado
+    for chave, nome, obs in (("forcada", "Venda forçada", "0 a 6 meses"),
+                             ("mercado", "Venda a mercado", "6 a 18 meses"),
+                             ("maximo", "Potencial máximo", "comprador estratégico")):
         socio = fv.get(chave)
         if socio is None:
             continue
@@ -108,7 +110,8 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         # somar a dívida inteira inflaria a ida a mercado até o valor da dívida
         cen = nomes.get({"forcada": "conservador", "mercado": "base", "maximo": "otimista"}[chave])
         if not sem_caixa and socio <= 0 and cen is not None and cen < 0:
-            socio = max(cen, piso) if piso is not None else cen  # mínimo nunca abaixo da liquidação ordenada
+            # a venda forçada é 60% da venda a mercado, sem piso (11/11/2026); os demais não ficam abaixo da liquidação
+            socio = cen if chave == "forcada" or piso is None else max(cen, piso)
         # base única (10/11/2026): o bruto tem o caixa da empresa dentro e sai a dívida bruta + prováveis. Os
         # fornecedores já saem dentro da liquidação e, no fluxo, fazem parte do giro da operação.
         ativos = sem_caixa or any(abs(socio - x) < 1 for x in pisos if x > 0) and chave != "maximo"

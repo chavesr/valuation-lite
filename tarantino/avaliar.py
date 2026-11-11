@@ -16,7 +16,8 @@ from engine.normalizacao import DREEconomica
 from engine.risco import avaliar_risco
 from engine.score_case import NotaDimensao, aplicar_qualitativo, excluir_haveres_socios, propor_notas
 from engine.finalidade import leitura, ler_finalidade
-from engine.valuation import ResultadoValuation, avaliar, carregar_parametros
+from engine.valuation import (ResultadoValuation, avaliar, carregar_parametros, margens_recuperacao,
+                              parametros_do_case)
 from tarantino.mercado import DadoIndisponivel, mudancas, obter_mercado, selic_por_horizonte
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
@@ -128,9 +129,9 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
         raise ValueError("Sem DRE econômica: a normalização não encontrou receita.")
     gci = ResultadoGCI.model_validate_json((saida / "gci.json").read_text(encoding="utf-8")) \
         if (saida / "gci.json").exists() else None
-    p = carregar_parametros()
     arq_val = saida / "valuation_decisoes.json"
     dec_val = json.loads(arq_val.read_text(encoding="utf-8")) if arq_val.exists() else {}
+    p = parametros_do_case(dados, dec_val, carregar_parametros())
     haveres = excluir_haveres_socios(dados, dec_val)
 
     base = next((d for d in dres if d.confianca != "baixa"), dres[0])
@@ -183,9 +184,21 @@ def avaliar_case(pasta_empresa: str | Path, selic: float | None = None,
                         "no giro); desconta da parte do sócio.")
     dec_val.setdefault("fornecedores_vencidos", {"valor": None, "fonte": None})
     arq_val.write_text(json.dumps(dec_val, indent=2, ensure_ascii=False), encoding="utf-8")
+    # 11/11/2026 (IBRATE): o analista fixa os períodos que formam o lucro sustentável e o crescimento, quando o
+    # exercício contábil não representa a operação (ex.: contabilidade com só 1/3 da receita). Os demais períodos
+    # continuam na normalização e no relatório, só não entram no fluxo.
+    base_dec = dec_val.get("periodos_base") or {}
+    recuperacao = margens_recuperacao(dres, dec_val.get("recuperacao_margem"), p)  # antes do filtro: usa todos
+    if base_dec.get("periodos"):
+        escolhidos = [d for d in dres if d.periodo in base_dec["periodos"]]
+        if not escolhidos:
+            raise ValueError(f"periodos_base {base_dec['periodos']} não existem na normalização "
+                             f"({', '.join(d.periodo for d in dres)})")
+        dres = escolhidos
     resultado = avaliar(dados, dres, gci, risco, notas, p, dec_cont, dec_val["piso"],
                         crescimento_informado=dec_val.get("crescimento_historico"),
-                        fornecedores_vencidos=(dec_val.get("fornecedores_vencidos") or {}).get("valor"))
+                        fornecedores_vencidos=(dec_val.get("fornecedores_vencidos") or {}).get("valor"),
+                        recuperacao=recuperacao)
     if haveres:
         resultado.haveres_fora_da_divida = haveres
         resultado.alertas.append(f"Haveres de sócio de R$ {brl(haveres, 0)} fora da dívida por decisão do analista "

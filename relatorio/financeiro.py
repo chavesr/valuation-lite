@@ -409,27 +409,60 @@ ATIVOS = (("imoveis", "Imóveis"), ("veiculos", "Veículos"), ("maquinas_equipam
 
 
 def ativos_empresa(dados, ativos: dict | None, p: dict) -> dict:
-    """Aba 'Ativos da empresa' (11/11/2026). Estoque e contas a receber vêm do último balanço, a valor de realização
-    da liquidação ordenada; imóveis, veículos, máquinas e móveis vêm de _valuation/ativos.json (relação de bens,
-    preenchida pelo analista) — sem o dado, n/d. Fecha com o imobilizado líquido do balanço, como entra no piso."""
+    """Aba 'Ativos da empresa': só Ativo | Valor, o valor de venda a mercado de cada bem (decisão de 11/11/2026).
+    Valor = `valor_mercado` do _valuation/ativos.json (relação de bens, preenchida pelo analista); sem ele, o valor
+    contábil × o percentual de patrimonio_mercado (imobilizado 100%, estoque 90%, receber 95%); sem nenhum, n/d.
+    Estoque e contas a receber vêm do último balanço quando o analista não preenche. `fora_da_venda: true` marca o
+    bem que não vai com a empresa (ex.: imóvel dos sócios), fora do total. O piso de liquidação (venda forçada)
+    continua no cálculo e só aparece na nota."""
     bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
-    h = p.get("piso_patrimonial") or {}
+    hm = p.get("patrimonio_mercado") or {}
     itens = (ativos or {}).get("itens") or {}
     linhas = []
     for chave, nome in ATIVOS:
         it = itens.get(chave) or {}
-        contabil, realiz, obs = it.get("valor_contabil"), it.get("valor_realizacao"), it.get("obs")
+        contabil, valor = it.get("valor_contabil"), it.get("valor_mercado")
         if chave in ("estoques", "contas_receber") and bp is not None and contabil is None:
             contabil = getattr(bp, chave)
-            if contabil is not None and realiz is None:
-                realiz = contabil * h.get(chave, 1.0)
-                obs = obs or f"balanço de {bp.data_base:%m/%Y}; liquidação a {h.get(chave, 1.0):.0%}"
-        linhas.append({"nome": nome, "contabil": contabil, "realizacao": realiz, "obs": obs})
-    imob = None
-    if bp is not None and bp.imobilizado_liquido is not None:
-        imob = {"contabil": bp.imobilizado_liquido, "realizacao": bp.imobilizado_liquido * h.get("imobilizado", 1.0),
-                "obs": f"balanço de {bp.data_base:%m/%Y}; liquidação a {h.get('imobilizado', 1.0):.0%}"}
-    return {"linhas": linhas, "imobilizado": imob, "fonte": (ativos or {}).get("fonte")}
+        if valor is None and contabil is not None:
+            valor = contabil * hm.get(chave if chave in ("estoques", "contas_receber") else "imobilizado", 1.0)
+        linhas.append({"nome": nome, "valor": valor, "fora": bool(it.get("fora_da_venda"))})
+    pt = ponte_liquidacao(bp, p.get("piso_patrimonial") or {})
+    return {"linhas": linhas, "total": sum(x["valor"] for x in linhas if x["valor"] is not None and not x["fora"]),
+            "fonte": (ativos or {}).get("fonte"), "piso": pt["piso"] if pt else None,
+            "data_base": pt["data_base"] if pt else None}
+
+
+def ponte_liquidacao(bp, h: dict) -> dict | None:
+    """Do balanço ao piso de liquidação (11/11/2026, IBRATE): mesma conta de engine.valuation.liquidacao, linha a
+    linha, para a seção 'Ativos da empresa' fechar com o piso usado no preço. Outros ativos do balanço (adiantamentos,
+    tributos a recuperar etc., implícitos em PL + passivos − ativos listados) aparecem, mas não entram na liquidação."""
+    if bp is None:
+        return None
+    v = lambda x: x or 0.0  # noqa: E731
+    ativos = [("Caixa e aplicações", v(bp.caixa_aplicacoes), h.get("caixa", 1.0)),
+              ("Contas a receber", v(bp.contas_receber), h.get("contas_receber", 1.0)),
+              ("Estoque", v(bp.estoques), h.get("estoques", 1.0)),
+              ("Imobilizado líquido", v(bp.imobilizado_liquido), h.get("imobilizado", 1.0))]
+    passivos = [("Fornecedores e adiantamentos", v(bp.fornecedores)),
+                ("Obrigações trabalhistas", v(bp.obrigacoes_trabalhistas)),
+                ("Obrigações fiscais", v(bp.obrigacoes_fiscais)),
+                ("Parcelamentos fiscais", v(bp.parcelamentos_fiscais)),
+                ("Empréstimos", v(bp.emprestimos_cp) + v(bp.emprestimos_lp)),
+                ("Mútuos com sócios", v(bp.mutuos_socios))]
+    linhas = [{"nome": n, "contabil": c, "realizacao": round(c * f, 2), "obs": f"{f:.0%} do contábil"}
+              for n, c, f in ativos if c]
+    outros = None
+    if bp.patrimonio_liquido is not None:
+        outros = round(bp.patrimonio_liquido + sum(x for _, x in passivos) - sum(c for _, c, _ in ativos), 2)
+        if abs(outros) >= 1:
+            linhas.append({"nome": "Outros ativos do balanço", "contabil": outros, "realizacao": 0.0,
+                           "obs": "adiantamentos, tributos a recuperar etc.: não entram"})
+    total_ativos = round(sum(l["realizacao"] for l in linhas), 2)
+    pas = [{"nome": n, "valor": -x} for n, x in passivos if x]
+    piso = round(total_ativos + sum(p["valor"] for p in pas), 2)
+    return {"data_base": f"{bp.data_base:%d/%m/%Y}" if bp.data_base else None, "ativos": linhas,
+            "total_ativos": total_ativos, "passivos": pas, "piso": piso}
 
 
 def linhas_receita_f5(qual: dict) -> dict | None:
@@ -473,7 +506,8 @@ def projecao_dre(dres: list[dict], v: dict, ano0: int) -> dict | None:
     base_c = next((x for x in v.get("cenarios", []) if x["nome"] == "base"), None)
     fluxo = v.get("fluxo_base") or 0
     d = next((x for x in dres if x["periodo"] == v.get("periodo_base")), None)
-    if not base_c or not base_c.get("fluxos") or fluxo <= 0 or not d:
+    # 11/11/2026: projeção sempre, mesmo com caixa negativo (o preço então vem do piso, mas o leitor vê o porquê)
+    if not base_c or not base_c.get("fluxos") or not fluxo or not d:
         return None
 
     def conta(nome):
@@ -504,6 +538,14 @@ def projecao_dre(dres: list[dict], v: dict, ano0: int) -> dict | None:
         linhas.append((rot, [val] + [val * (1 + g) ** t for t in range(1, n + 1)] + [None], cls))
         if rot == "= EBITDA econômico":
             linhas.append(("Margem EBITDA", [ebitda / rb * 100 if rb else None] * (n + 1) + [None], "margem"))
+    rec = v.get("recuperacao_margem")
+    if rec:  # 11/11/2026: a margem volta em direção ao melhor ano — diferença para a margem constante, ano a ano
+        constante = [(oe + acerto) * (1 + g) ** t for t in range(1, n + 1)]
+        linhas.append((f"(+) Recuperação de margem (rumo a {rec['alvo']})",
+                       [0.0] + [f_ - c_ for f_, c_ in zip(base_c["fluxos"], constante)] + [None], ""))
+        linhas.append(("Margem do caixa do dono", [rec["margens"]["partida"] * 100]
+                       + [f_ / (rb * (1 + g) ** t) * 100 if rb else None
+                          for t, f_ in enumerate(base_c["fluxos"], start=1)] + [None], "margem"))
     caixa = [fluxo] + list(base_c["fluxos"]) + [base_c["valor_terminal"]]
     fator = [None] + [1 / (1 + taxa) ** t for t in range(1, n + 1)] + [1 / (1 + taxa) ** n]
     vp = [None] + [c_ * f_ for c_, f_ in zip(caixa[1:], fator[1:])]

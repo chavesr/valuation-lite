@@ -27,6 +27,11 @@
     "otimista_teto": 0.1,
     "perpetuidade": 0.03
   },
+  "recuperacao_margem": {
+    "origem": "11/11/2026 (Guilherme, Emunah): quando a margem oscila entre anos, parte do realizado mais recente e projeta a volta à margem do melhor ano recente. Conservador = margem atual; base = fração do caminho; otimista = meta. Ativa por case em valuation_decisoes.json → recuperacao_margem {de, alvo, fracao_base?, anos?}",
+    "fracao_base": 0.5,
+    "anos": 3
+  },
   "teste_perpetuidade": {
     "origem": "a calibrar: critérios mínimos (todos exigidos, além de score ≤ 30)",
     "receita_recorrente_minima": 0.5,
@@ -68,6 +73,10 @@
   "margem_de_seguranca": {
     "origem": "DESATIVADA em 10/11/2026 (opção A): o recomendado é o cenário base; o conservador (+3 p.p. na taxa, crescimento zero, múltiplo 1,5×) e a régua da casa já protegem o comprador. Mantida só como registro.",
     "percentual": 0.0
+  },
+  "venda_forcada": {
+    "origem": "decisão de 11/11/2026 (Guilherme): a venda forçada é sempre 60% da ida a mercado na venda a mercado, sem piso de liquidação; a taxa do cenário é a implícita nesse valor",
+    "fracao_do_mercado": 0.6
   },
   "cenarios_taxa": {
     "conservador": 0.03,

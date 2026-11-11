@@ -23,6 +23,7 @@ from relatorio import transacao as calc_tr
 from relatorio.render import html_para_pdf, montar_html
 from tarantino.case import DadosCase, ler_estado
 from tarantino.inventario import PASTA_SAIDA
+from tarantino.leitura import nao_lidos, resumos
 from tarantino.revisao import pendentes_graves
 
 RAIZ = Path(__file__).resolve().parents[1]
@@ -67,6 +68,12 @@ def verificar_trava(saida: Path) -> None:
     if graves:
         raise RelatorioBloqueado(f"{len(graves)} alerta(s) grave(s) da revisão sem decisão: {', '.join(graves)} — "
                                  f"decida em {PASTA_SAIDA}/revisao_decisoes.json.")
+    faltam = nao_lidos(saida.parent)  # 11/11/2026: tudo o que a empresa mandou, lido por inteiro
+    if faltam:
+        raise RelatorioBloqueado(f"{len(faltam)} documento(s) da empresa sem leitura registrada em "
+                                 f"{PASTA_SAIDA}/leitura.json: " + "; ".join(faltam[:15])
+                                 + (" …" if len(faltam) > 15 else "")
+                                 + " — leia cada um por inteiro e registre o resumo antes do relatório.")
 
 
 def _r(v: float | None) -> str:
@@ -92,16 +99,16 @@ def fatos_compactos(pasta: Path) -> str:
     try:  # ida a mercado (capítulo 6): é o número que o relatório mostra (10/11/2026)
         dados = _dados(saida)
         dres = json.loads((saida / "dre_economica.json").read_text(encoding="utf-8"))
-        tr = calc_tr.montar(dados, v, fin, _param_valuation(), dres)
+        tr = calc_tr.montar(dados, v, fin, _param_valuation(dados, saida), dres)
         cen = {x["chave"]: x for x in tr["cenarios"]}
         m = cen.get("mercado")
         if m:
-            linhas.append(f"- Valor de ida a mercado RECOMENDADO (o total que o comprador paga: parte do sócio + dívidas "
-                          f"e obrigações assumidas; base da comissão ND): {_r(m['bruto'])}")
-            if cen.get("forcada") and cen.get("maximo"):
-                linhas.append(f"- Ida a mercado mínima (venda forçada) {_r(cen['forcada']['bruto'])} · máxima "
-                              f"(comprador estratégico) {_r(cen['maximo']['bruto'])}")
-            linhas.append(f"- Composição da ida a mercado recomendada: dívidas e obrigações que o comprador assume "
+            # 11/11/2026: a ND não recomenda valor de ida a mercado — só mostra os três cenários, com o mesmo peso
+            linhas.append("- Valor de ida a mercado (o total que o comprador paga: parte do sócio + dívidas e obrigações "
+                          "assumidas; base da comissão ND), em três cenários SEM recomendação (a venda forçada é sempre 60% da "
+                          "venda a mercado, sem piso de liquidação): "
+                          + " · ".join(f"{x['nome'].lower()} {_r(x['bruto'])}" for x in tr["cenarios"]))
+            linhas.append(f"- Composição da ida a mercado no cenário venda a mercado: dívidas e obrigações que o comprador assume "
                           f"{_r(m['bruto'] - m['preco_cotas'])} + parte do sócio {_r(m['preco_cotas'])} "
                           f"(a parte do sócio só se cita na estrutura da transação)")
             if v.get("haveres_fora_da_divida"):
@@ -115,25 +122,26 @@ def fatos_compactos(pasta: Path) -> str:
                 linhas.append(f"- Das dívidas da empresa, {_r(m['credito_vendedor'])} são devidas ao próprio sócio "
                               "vendedor (dividendos a pagar/mútuo): saem do valor, mas voltam para ele na quitação e "
                               "já estão somadas na sobra para o dono")
-            linhas.append(f"- Comissão ND {_r(m['comissao'])} · IR estimado do sócio {_r(m['ir'])} · "
-                          f"sobra para o dono {_r(m['sobra'])}")
+            linhas.append("- Comissão ND · IR estimado do sócio · sobra para o dono, por cenário: "
+                          + " · ".join(f"{x['nome'].lower()} {_r(x['comissao'])} · {_r(x['ir'])} · {_r(x['sobra'])}"
+                                       for x in tr["cenarios"]))
             if (v.get("fluxo_base") or 0) > 0:
-                linhas.append(f"- Payback da ida a mercado (descontado o caixa que vem com a empresa): "
+                linhas.append(f"- Payback da ida a mercado na venda a mercado (descontado o caixa que vem com a empresa): "
                               f"{m['liquido_caixa'] / v['fluxo_base']:.2f} anos (régua da casa: até 3)".replace(".", ",", 1))
         me = tr.get("metodos") or {}
-        linhas.append(f"- Origem da ida a mercado: {v.get('valor_oferta_origem') or '—'} · fluxo de caixa (base + caixa) "
+        linhas.append(f"- Origem da ida a mercado: {v.get('valor_oferta_origem') or '—'} · fluxo de caixa (venda a mercado + caixa) "
                       f" {_r(me.get('dcf'))} · piso = liquidação dos ativos {_r(me.get('liquidacao'))}")
         if me.get("patrimonio") is not None:
             linhas.append(f"- Ativos a mercado {_r(me['patrimonio'])}: só referência para a negociação (argumento do "
                           "vendedor), NÃO é valor da empresa — só se realizam se a operação for encerrada")
         sug = (tr.get("pagamento") or {}).get("estruturas", [None])[-1]
         if sug:
-            linhas.append(f"- Pagamento sugerido da parte do sócio: entrada de {sug['entrada_pct']:.0%} ({_r(sug['entrada'])})"
+            linhas.append(f"- Pagamento sugerido da parte do sócio (simulação na venda a mercado): entrada de {sug['entrada_pct']:.0%} ({_r(sug['entrada'])})"
                           + (f", {sug['n']} parcelas de {_r(sug['parcela'])} corrigidas pelo CDI" if sug["n"] else "")
-                          + (f", earn-out até {_r(sug['earnout'])}" if sug["earnout"] else "")
+                          + (f", earn-out até {_r(sug['earnout'])} (potencial máximo)" if sug["earnout"] else "")
                           + (f", escrow de {_r(sug['escrow'])}" if sug["escrow"] else ""))
     except (OSError, ValueError, KeyError):
-        linhas.append(f"- Valor recomendado: {_r(v['preco_recomendado'])}")
+        linhas.append(f"- Valor no cenário venda a mercado: {_r(v['preco_recomendado'])}")
     linhas += [
                f"- Receita {v['periodo_base']}: {_r(v['receita_base'])} · EBITDA econômico {_r(v['ebitda_base'])} · "
                f"caixa sustentável {_r(v['fluxo_base'])}/ano",
@@ -144,6 +152,11 @@ def fatos_compactos(pasta: Path) -> str:
                f"- Finalidade: {fin.descricao}" + (f" · pedido do vendedor {_r(fin.pedido_vendedor)}" if fin.pedido_vendedor else "")]
     for c in v.get("contingencias", []):
         linhas.append(f"- Contingência {c['classificacao']}: {c['descricao']} ({_r(c['valor_bruto'])})")
+    if fin.tipo == "avaliacao":
+        linhas.append("- ATENÇÃO: valuation independente, SEM decisão de venda. Não fale em comprador, comissão da ND, "
+                      "ida a mercado, preço pedido nem 'o dono teria de pôr dinheiro para vender': o número é o VALOR "
+                      "DA EMPRESA (valor das cotas + dívidas). Em estrutura_transacao, escreva o que fazer antes de uma "
+                      "eventual venda ou sucessão (regularizações), sem estrutura de pagamento.")
     linhas += ["", "## Fatos da análise qualitativa (F5)", f"- Resumo: {q.get('resumo', '—')}",
                f"- Modelo de negócio: {q.get('modelo_negocio', '—')}",
                f"- Fosso: {(q.get('fosso') or {}).get('forca', '—')} — {(q.get('fosso') or {}).get('justificativa', '')}",
@@ -163,6 +176,9 @@ def fatos_compactos(pasta: Path) -> str:
             if st == "descartado":
                 continue
             linhas.append(f"- [{a['severidade']}] {a['achado'][:220]}" + (f" (analista: {st})" if st else ""))
+    lidos = resumos(pasta)
+    if lidos:
+        linhas += ["", lidos]
     return "\n".join(linhas)
 
 
@@ -298,20 +314,28 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     focus_selic = (focus.get("selic") or {}).get("medianas") or {}
     focus_ipca = (focus.get("ipca") or {}).get("medianas") or {}
     dre_c = calc_fin.dre_contabil(dados)
-    financeiro = {"dre": calc_fin.tabela_dre(dre_c), "custos": calc_fin.composicao_custos(dre_c),
-                  "receita_anual": calc_fin.receita_anual(dre_c), "mensal": calc_fin.receita_mensal(dados),
+    # 11/11/2026 (IBRATE): indicadores montados pelo analista a partir dos gerenciais (receita anual, linhas de
+    # receita, volume × preço), já no formato do relatório; prevalecem sobre a DRE contábil e a declaração da F5
+    ind = json.loads(_ler(saida / "indicadores_analista.json") or "{}")
+    ra_ind = ind.get("receita_anual")
+    financeiro = {"dre": calc_fin.tabela_dre(dre_c), "custos": ind.get("custos") or calc_fin.composicao_custos(dre_c),
+                  "receita_anual": ([tuple(x) for x in ra_ind["serie"]] if ra_ind else calc_fin.receita_anual(dre_c)),
+                  "receita_anual_fonte": (ra_ind or {}).get("fonte"), "mensal": calc_fin.receita_mensal(dados),
                   "parcial": next(({"rotulo": c_, "rb": a["rb"]} for c_, a in zip(dre_c["colunas"], dre_c["abertas"])
                                    if a["meses"] < 12 and a.get("rb")), None),
                   "ponte": calc_fin.ponte_economica(dre_c, dres, v["periodo_base"]),
                   "giro": calc_fin.giro_divida(dados, dre_c, dres, v), "verticais": calc_fin.verticais_risco(v, qual),
-                  "clientes": (calc_fin.clientes_planilha(dados, dre_c) or _clientes_sped(dados.concentracao_clientes)
+                  "clientes": (ind.get("clientes") or calc_fin.clientes_planilha(dados, dre_c)
+                               or _clientes_sped(dados.concentracao_clientes)
                                or calc_fin.clientes_f5(qual, dre_c, dados)),
-                  "linhas_receita": calc_fin.linhas_receita_planilha(dados) or calc_fin.linhas_receita_f5(qual),
-                  "operacional": calc_fin.operacional_planilha(dados) or calc_fin.operacional_f5(qual),
+                  "linhas_receita": (ind.get("linhas_receita") or calc_fin.linhas_receita_planilha(dados)
+                                     or calc_fin.linhas_receita_f5(qual)),
+                  "operacional": (ind.get("operacional") or calc_fin.operacional_planilha(dados)
+                                  or calc_fin.operacional_f5(qual)),
                   "leituras": calc_fin.leituras_verticais(qual),
-                  "transacao": calc_tr.montar(dados, v, fin, _param_valuation(), dres),
+                  "transacao": calc_tr.montar(dados, v, fin, _param_valuation(dados, saida), dres),
                   "ativos": calc_fin.ativos_empresa(dados, json.loads(_ler(saida / "ativos.json") or "{}"),
-                                                    _param_valuation()),
+                                                    _param_valuation(dados, saida)),
                   "projecao": calc_fin.projecao_dre(dres, v, hoje.year)}
     return {"empresa": estado.empresa, "empresa_curto": nome_curto(estado.empresa),
             "setor": SETORES.get(base.get("atividade"), base.get("atividade")), "ipca_12m": ipca,
@@ -320,7 +344,7 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
             "empresas_grupo": [(e.razao_social, e.cnpj) for e in dados.empresa.cnpjs],
             "regime": base.get("regime_comprador", "").split(" (")[0],
             "case_id": estado.id, "data": f"{MESES[hoje.month - 1]} de {hoje.year}",
-            "finalidade": fin.descricao, "pedido_vendedor": fin.pedido_vendedor, "textos": textos.model_dump(),
+            "finalidade": fin.descricao, "tipo_finalidade": fin.tipo, "pedido_vendedor": fin.pedido_vendedor, "textos": textos.model_dump(),
             "valuation": v, "ficha": ficha, "macro": macro, "selic_fonte": selic_fonte,
             "dre": {"periodos": [d["periodo"] for d in ordenados], "linhas": linhas},
             "grafico_dre": [(d["periodo"], valor(d, "Receita bruta"), d["ebitda"]) for d in ordenados],
@@ -350,6 +374,9 @@ def gerar_relatorio(pasta_empresa: str | Path, modo: str = "claude-code", modelo
     return out
 
 
-def _param_valuation() -> dict:
+def _param_valuation(dados: DadosCase | None = None, saida: Path | None = None) -> dict:
     from engine.valuation import carregar_parametros as _cp
-    return _cp()
+    from engine.valuation import parametros_do_case
+    if dados is None or saida is None:
+        return _cp()
+    return parametros_do_case(dados, json.loads(_ler(saida / "valuation_decisoes.json") or "{}"), _cp())

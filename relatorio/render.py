@@ -102,7 +102,6 @@ tr.total td { font-weight: 700; background: var(--cinza-quadro); }
 .perfil .val small { font-size: 6.8pt; color: var(--gray2); }
 .bloco-junto { break-inside: avoid; }
 .formula { background: var(--cinza-quadro); border-radius: 2mm; padding: 1.6mm 3mm; margin: 1mm 0 1.4mm; font-size: 8.4pt; }
-td.base { background: var(--laranja-claro); font-weight: 700; outline: 1.5px solid var(--laranja); }
 td.col, th.col { background: var(--laranja-claro); }
 th.col { color: var(--ink); }
 td.obs-cel { color: var(--gray); font-size: 7pt; }
@@ -259,10 +258,11 @@ def cap1_visao_geral(c: dict) -> str:
     ida = _ida(c)
     pb = _payback_ida(c) if ida else v.get("payback_preco")
     if ida.get("mercado"):
-        k_valor = ("faixa", "Valor de ida a mercado", g.brl_compacto(ida["mercado"]["bruto"]),
-                   "faixa " + g.faixa_compacta(min(x["bruto"] for x in ida.values()), max(x["bruto"] for x in ida.values())))
+        k_valor = ("faixa", "Valor de ida a mercado",
+                   g.faixa_compacta(min(x["bruto"] for x in ida.values()), max(x["bruto"] for x in ida.values())),
+                   "da venda forçada ao potencial máximo")
     else:
-        k_valor = ("faixa", "Faixa de valor", g.faixa_compacta(*faixa), "do conservador ao otimista")
+        k_valor = ("faixa", "Faixa de valor", g.faixa_compacta(*faixa), "da venda forçada ao potencial máximo")
     kpis = [("receita", f"Receita {v['periodo_base']}", g.brl_compacto(v["receita_base"]),
              f"crescimento {pct(v['crescimento_historico'])} a.a." if v.get("crescimento_historico") is not None else ""),
             ("ebitda", "EBITDA econômico", g.brl_compacto(v["ebitda_base"]), f"margem de {pct(margem)}"),
@@ -277,14 +277,14 @@ def cap1_visao_geral(c: dict) -> str:
                        f'<div class="val">{escape(val)}</div><div class="obs">{escape(obs)}</div></div>'
                        for ic, rot, val, obs in kpis)
     if ida:
-        valores = [(x["nome"], x["bruto"], x["obs"], k == "mercado") for k, x in ida.items()]
+        valores = [(x["nome"], x["bruto"], x["obs"], False) for x in ida.values()]  # sem destaque: não recomendamos valor
         nota_vale = ("Valor de ida a mercado: o total que o comprador paga pela empresa, somando o que vai ao sócio e "
                      "as dívidas e obrigações da empresa que ele assume. Antes da comissão da ND.")
     else:
         fv = v.get("faixa_venda") or {"forcada": faixa[0], "mercado": v["preco_recomendado"], "maximo": faixa[1]}
-        valores = [("Venda forçada", fv["forcada"], "cenário conservador · 0 a 6 meses", False),
-                   ("Venda a mercado", fv["mercado"], "recomendado · 6 a 18 meses", True),
-                   ("Potencial máximo", fv["maximo"], "cenário otimista · estratégico", False)]
+        valores = [("Venda forçada", fv["forcada"], "0 a 6 meses", False),
+                   ("Venda a mercado", fv["mercado"], "6 a 18 meses", False),
+                   ("Potencial máximo", fv["maximo"], "comprador estratégico", False)]
         nota_vale = "Valores para 100% das cotas, já descontadas dívidas e contingências prováveis."
     if c.get("pedido_vendedor"):
         valores.append(("Expectativa do dono", c["pedido_vendedor"], "pedido informado", False))
@@ -298,7 +298,7 @@ def cap1_visao_geral(c: dict) -> str:
                                                             ("Selic", ev["selic"], ev["ret_selic"], False),
                                                             ("IPCA+", ev["ipca_mais"], ev["ret_ipca"], False)))
                     + f'</table><div class="nota">Desembolso do comprador: {g.brl_compacto(ev["desembolso"])}, o '
-                    'valor de ida a mercado (parte do sócio + dívidas assumidas)'
+                    'valor de ida a mercado no cenário venda a mercado (parte do sócio + dívidas assumidas)'
                     + (f'; o caixa de {g.brl_compacto(ev["caixa_empresa"])} que vem com a empresa entra no retorno'
                        if ev.get("caixa_empresa") else '')
                     + '. A diferença para a renda fixa é o prêmio pelo risco. Ano a ano no capítulo 5.</div>')
@@ -466,6 +466,12 @@ def _mes(comp: str) -> str:
 
 
 def _bloco_clientes(cl: dict | None) -> str:
+    if cl and cl.get("b2c"):  # 11/11/2026 (IBRATE): clientes pessoa física, pulverizados — sem ranking de clientes
+        cards_html = "".join(f'<div class="kpi mini"><div class="rot">{escape(c["rotulo"])}</div><div class="val">'
+                             f'{escape(c["valor"])}</div><div class="obs">{escape(c.get("obs") or "")}</div></div>'
+                             for c in cl["cards"])
+        return (f'<div class="kpis4">{cards_html}</div>'
+                f'<div class="nota">{escape(cl.get("texto") or "")} Fonte: {escape(cl.get("fonte") or ND)}.</div>')
     if not cl or not cl.get("ranking"):
         return _nd_nota("os 20 maiores clientes dos últimos 3 anos, com faturamento no ano e setor de atuação "
                         "(planilha da ND) ou a curva ABC das notas fiscais.")
@@ -542,7 +548,7 @@ def cap4_financeiro(c: dict) -> str:
             bloco_ano += '<div class="nota">'
         if f.get("parcial"):
             bloco_ano += f' {escape(f["parcial"]["rotulo"])}: {escape(g.brl_compacto(f["parcial"]["rb"]))} até agora.'
-        bloco_ano += ' Fonte: DRE contábil.</div>'
+        bloco_ano += f' Fonte: {escape(f.get("receita_anual_fonte") or "DRE contábil")}.</div>'
     else:
         bloco_ano = _nd_nota("as DREs anuais dos últimos 3 anos.")
     m = f.get("mensal")
@@ -576,18 +582,23 @@ def cap4_financeiro(c: dict) -> str:
 
     # custos
     cu, dre = f.get("custos"), f["dre"]
-    if cu:
+    if cu and cu.get("margens"):  # 11/11/2026: composição montada pelo analista a partir do gerencial
+        series = [(nome, vals, cor) for (nome, vals), cor in zip(cu["margens"], (g.LARANJA, g.TINTA, g.CINZA))]
+    elif cu:
         idx = [dre["colunas"].index(a) for a in cu["anos"]]
         margens = [(nome, [vals[i] for i in idx]) for nome, vals in dre["margens"]]
         series = [(nome.replace('Margem ', '').capitalize().replace('Ebitda', 'EBITDA'), vals, cor)
                   for (nome, vals), cor in zip(margens, (g.CINZA, g.LARANJA, g.TINTA))
                   if all(x is not None for x in vals)]
+    if cu:
         h += ['<div class="duas">',
               _secao("Análise de custos", "divida",
                      '<div class="legenda-graf">Para onde vai cada R$ 100 de receita bruta</div>'
                      + g.empilhadas_100(cu["anos"], cu["segmentos"])),
               _secao("Margens", "ebitda", '<div class="legenda-graf">Margens sobre a receita bruta (%)</div>'
                      + g.linhas_rentabilidade(cu["anos"], series)), '</div>']
+        if cu.get("nota"):
+            h.append(f'<div class="nota">{escape(cu["nota"])}</div>')
     else:
         h.append(_secao("Análise de custos", "divida", _nd_nota("a DRE com custo das vendas e despesas abertas.")))
 
@@ -688,22 +699,21 @@ def _pp(v: float) -> str:
 
 
 def _bloco_ativos(at: dict | None) -> str:
+    """Ativo | Valor (venda a mercado de cada bem), decisão de 11/11/2026; o piso de liquidação só na nota."""
     if not at:
         return _nd_nota("o balanço e a relação de bens (imóveis, veículos, máquinas, móveis).")
-
-    def lin(r, cls=""):
-        return (f"<tr class='{cls}'><td>{escape(r['nome'])}</td>"
-                f"<td class='n'>{_mil(r['contabil']) if r['contabil'] is not None else ND}</td>"
-                f"<td class='n'>{_mil(r['realizacao']) if r['realizacao'] is not None else ND}</td>"
-                f"<td class='obs-cel'>{escape(r.get('obs') or '')}</td></tr>")
-
-    corpo = "".join(lin(r) for r in at["linhas"])
-    if at.get("imobilizado"):
-        corpo += lin({"nome": "Imobilizado líquido (balanço)", **at["imobilizado"]}, "sub")
-    nota = ("R$ mil. Contábil: balanço ou relação de bens (custo de aquisição). Realização: liquidação ordenada, "
-            "base do piso do valuation. n/d = sem o dado.") + (f" Relação de bens: {at['fonte']}." if at.get("fonte") else "")
-    return ('<table class="compacta ativos"><tr><th>Ativo</th><th class="n">Contábil</th>'
-            '<th class="n">Realização</th><th>Observação</th></tr>' + corpo + '</table>'
+    corpo = "".join(f"<tr><td>{escape(r['nome'])}{' <small>(fora da venda)</small>' if r['fora'] else ''}</td>"
+                    f"<td class='n'>{_mil(r['valor']) if r['valor'] is not None else ND}</td></tr>"
+                    for r in at["linhas"])
+    corpo += f"<tr class='total'><td>= Total a mercado</td><td class='n'>{_mil(at['total'])}</td></tr>"
+    nota = ("R$ mil. Valor de venda a mercado de cada bem, num negócio normal; sem avaliação, o valor contábil "
+            "(estoque a 90% e contas a receber a 95%). n/d = sem o dado. Bens fora da venda não entram no total.")
+    if at.get("piso") is not None:
+        nota += (f" Numa liquidação ordenada (bens a valor de realização, menos todos os passivos) o patrimônio vale "
+                 f"{g.brl_compacto(at['piso'])}: é o piso da venda a mercado.")
+    if at.get("fonte"):
+        nota += f" Relação de bens: {at['fonte']}."
+    return ('<table class="compacta ativos"><tr><th>Ativo</th><th class="n">Valor</th></tr>' + corpo + '</table>'
             f'<div class="nota">{escape(nota)}</div>')
 
 
@@ -736,11 +746,12 @@ def cap5_valuation(c: dict) -> str:
     # projeção de DRE e caixa (cenário base) + cenários
     sem_caixa = (v.get("fluxo_base") or 0) <= 0
     pj = (c.get("financeiro") or {}).get("projecao")
-    nomes = {"conservador": "Conservador", "base": "Base", "otimista": "Otimista"}
-    if sem_caixa:
+    nomes = {"conservador": "Venda forçada", "base": "Venda a mercado", "otimista": "Potencial máximo"}
+    if sem_caixa and not pj:
         h.append(_secao("Projeção e cenários", "ebitda", '<div class="nota nd">A empresa não gera caixa '
                         'sustentável positivo: o fluxo descontado não sustenta valor, e o preço parte do patrimônio '
-                        '(ativos a mercado menos dívidas).</div>'))
+                        + ('(ativos a mercado menos dívidas).' if v.get('piso_usado') == 'mercado' else
+                           '(liquidação ordenada dos ativos menos passivos; ver Ativos da empresa).') + '</div>'))
     elif pj:
         ncol = len(pj["colunas"])
 
@@ -761,18 +772,40 @@ def cap5_valuation(c: dict) -> str:
                   + f"<td class='n'>{_mil(pj['soma_vp'])}</td></tr>")
         tab_pj = ('<table class="dre compacta projecao"><tr><th>R$ mil</th>'
                   + "".join(f"<th class='n'>{escape(x)}</th>" for x in pj["colunas"]) + f"</tr>{corpo}</table>")
-        nota_pj = (f"Cenário base: cada linha cresce {pct(pj['crescimento'])} a.a. sobre o período-base, com margens "
+        nota_pj = (f"Cenário venda a mercado: cada linha cresce {pct(pj['crescimento'])} a.a. sobre o período-base, com margens "
                    f"constantes; desconto a {pct(pj['taxa'])} a.a. ")
+        rec = v.get("recuperacao_margem")
+        if rec:
+            mg = rec["margens"]
+            nota_pj = (f"Cenário venda a mercado com recuperação de margem: a receita cresce {pct(pj['crescimento'])} a.a. e a margem "
+                       f"do caixa do dono sai de {pct(mg['partida'])} ({rec['de']}) e chega a {pct(mg['base'])} em "
+                       f"{rec['anos']} anos, "
+                       + (f"{(mg['base'] - mg['partida']) / (mg['meta'] - mg['partida']):.0%} do caminho "
+                          if mg['meta'] != mg['partida'] else "")
+                       + f"até a margem de {rec['alvo']} ({pct(mg['meta'])}). "
+                       f"Venda forçada: margem fica em {pct(mg['conservador'])}; potencial máximo: volta a {pct(mg['otimista'])}. "
+                       f"Desconto a {pct(pj['taxa'])} a.a. ")
         if pj["tem_acerto"]:
             nota_pj += ("O caixa do valuation é a média dos períodos analisados (nunca acima do mais recente), "
                         "por isso o ajuste à média. ")
-        if pj.get("multiplo_terminal"):
+        piso_vence = (v.get("valor_oferta_origem") or "").startswith("ativos") or (
+            v.get("piso_patrimonial") is not None and base is not None
+            and v["piso_patrimonial"] > base.get("valor_patrimonio", 0))
+        if pj.get("multiplo_terminal") and pj["multiplo_terminal"] > 0 and not piso_vence:
             nota_pj += (f"Valor ao fim = valor da empresa no último ano ({pj['multiplo_terminal']:.1f}× o caixa, "
                         "ou o valor dos ativos, o que for maior).").replace(".", ",", 1)
-        h.append(_secao("Projeção da DRE e do caixa (cenário base)", "ebitda",
+        if piso_vence and not sem_caixa:
+            nota_pj += (f" O caixa projetado é positivo, mas pequeno: trazido a valor de hoje, dá "
+                        f"{g.brl_compacto(base['valor_patrimonio'])} para o sócio, abaixo do piso de liquidação "
+                        f"({g.brl_compacto(v['piso_patrimonial'])}). Por isso o preço vem do piso (ver Ativos da empresa).")
+        if sem_caixa:
+            nota_pj += (" O caixa projetado é negativo: trazido a valor de hoje, não sustenta valor acima do "
+                        "patrimônio, e o preço vem do piso (liquidação ordenada dos ativos menos passivos; ver Ativos "
+                        "da empresa).")
+        h.append(_secao("Projeção da DRE e do caixa (cenário venda a mercado)", "ebitda",
                         tab_pj + f'<div class="nota">{escape(nota_pj)}</div>'))
     else:
-        h.append(_secao("Projeção da DRE e do caixa (cenário base)", "ebitda",
+        h.append(_secao("Projeção da DRE e do caixa (cenário venda a mercado)", "ebitda",
                         _nd_nota("a DRE econômica do período-base.")))
     off_fluxo, off_ativos = _offsets(c)
     merc = _ida(c).get("mercado")
@@ -791,22 +824,23 @@ def cap5_valuation(c: dict) -> str:
            + "</table>")
     bloco_cen = (tab
                  + '<div class="nota">R$ mil. Valor da operação = caixa projetado trazido a valor presente; somado ao '
-                   'caixa que a empresa tem hoje, dá o valor da empresa. Cada cenário vira uma ponta da faixa de ida a '
-                   'mercado: conservador = mínimo, base = recomendado, otimista = máximo.</div>')
+                   'caixa que a empresa tem hoje, dá o valor da empresa. Venda forçada: 60% da venda a mercado; a taxa é a '
+                   'que leva o mesmo fluxo da venda a mercado a esse valor (o retorno de quem compra nesse preço). Potencial máximo: taxa menor, crescimento histórico. Os três '
+                   'são cenários possíveis, sem recomendação.</div>')
 
     # football field — tudo em valor de ida a mercado (10/11/2026): métodos do fluxo somam a dívida líquida e os
     # prováveis; os do patrimônio somam dívida bruta, fornecedores e prováveis (ativos a mercado, com o caixa)
     faixas = []
     if len(v["cenarios"]) >= 2 and not sem_caixa:
         vals = [x["valor_empresa"] + caixa_emp for x in v["cenarios"]]
-        faixas.append(("Fluxo de caixa descontado", min(vals), max(vals), "conservador a otimista"))
+        faixas.append(("Fluxo de caixa descontado", min(vals), max(vals), "venda forçada a potencial máximo"))
     rp = v.get("regua_payback") or {}
     if rp.get("forcada") and rp.get("maximo"):
         faixas.append(("Régua da casa", rp["forcada"]["valor_empresa"] + caixa_emp, rp["maximo"]["valor_empresa"] + caixa_emp,
                        f"{str(rp['forcada']['anos']).replace('.', ',')} a {str(rp['maximo']['anos']).replace('.', ',')} anos de caixa"))
     if v.get("piso_patrimonial") is not None:
         liq = v["piso_patrimonial"] + off_ativos
-        faixas.append(("Liquidação dos ativos", liq, liq, "piso: venda forçada dos ativos"))
+        faixas.append(("Liquidação dos ativos", liq, liq, "piso da venda a mercado"))
     if v.get("epv") is not None:
         faixas.append(("Lucro perpétuo (EPV)", v["epv"] + off_fluxo, v["epv"] + off_fluxo, "caixa atual sem crescimento"))
     me = v.get("multiplo_ebitda") or {}
@@ -816,65 +850,48 @@ def cap5_valuation(c: dict) -> str:
     if v.get("patrimonio_mercado") is not None:
         am = v["patrimonio_mercado"] + off_ativos
         faixas.append(("Ativos a mercado (ref.)", am, am, "argumento de negociação; não entra no valor", True))
-    alvo = merc["bruto"] if merc else v["preco_recomendado"] + off_fluxo
-    marcadores = [("Ida a mercado recomendada", alvo, True)]
+    # 11/11/2026: a linha da venda a mercado continua no gráfico, só sem o rótulo de "recomendada"
+    marcadores = [("Venda a mercado", merc["bruto"] if merc else v["preco_recomendado"] + off_fluxo, True)]
     if c.get("pedido_vendedor"):
         marcadores.append(("Pedido do vendedor", c["pedido_vendedor"], False))
-    nota_ff = ("Todos os métodos em valor de ida a mercado, com o caixa da empresa dentro. Vale o fluxo de caixa no "
-               "cenário base; a liquidação dos ativos é o piso. Tracejados, só referência: o múltiplo de EBITDA vale "
-               "para empresas maiores, e os ativos a mercado só se realizam se a operação for encerrada.")
+    nota_ff = ("Todos os métodos em valor de ida a mercado, com o caixa da empresa dentro. Os cenários vêm do fluxo "
+               "de caixa (a venda forçada é 60% da venda a mercado); a liquidação dos ativos é o piso da venda a mercado. Tracejados, só referência: o múltiplo de "
+               "EBITDA vale para empresas maiores, e os ativos a mercado só se realizam se a operação for encerrada.")
     ff = _secao("Faixas de valor por método", "faixa", g.football_field(faixas, marcadores)
                 + f'<div class="nota">{escape(nota_ff)}</div>')
 
-    # sensibilidade + do valor à ida a mercado
-    sens = v.get("sensibilidade") or {}
-    bloco_sens = ""
-    if sens and not sem_caixa:
-        taxas = list(sens)
-        cres = list(next(iter(sens.values())))
-        tb, cb = f"{base['taxa']:.0%}" if base else None, f"{base['crescimento']:.0%}" if base else None
-        linhas = "".join(f"<tr><td><b>{escape(tx)}</b></td>" + "".join(
-            f"<td class='n{' base' if tx == tb and g_ == cb else ''}'>{_mil(sens[tx][g_] + off_fluxo)}</td>" for g_ in cres)
-            + "</tr>" for tx in taxas)
-        bloco_sens = ('<table class="compacta sens"><tr><th>Taxa \\ cresc.</th>'
-                      + "".join(f"<th class='n'>{escape(g_)}</th>" for g_ in cres) + f"</tr>{linhas}</table>"
-                      '<div class="nota">Valor da empresa pelo fluxo (R$ mil). Em destaque, o cenário base.</div>')
-    preco = v["preco_recomendado"]
+    # do valor à ida a mercado (11/11/2026: sem a sensibilidade e sem valor recomendado — os três cenários com o
+    # mesmo peso; a ND mostra os cenários possíveis e não recomenda valor de ida a mercado)
     ponte = []
-    do_fluxo = (v.get("valor_oferta_origem") or "").startswith("fluxo")
     if base and not sem_caixa:
-        ponte.append(("Valor da operação (fluxo, cenário base)", _mil(base["valor_empresa"]), ""))
+        ponte.append(("Valor da operação (fluxo, cenário venda a mercado)", _mil(base["valor_empresa"]), ""))
         ponte.append(("(+) Caixa da empresa", _mil(caixa_emp), ""))
-        ponte.append(("= Valor da empresa (cenário base)", _mil(base["valor_empresa"] + caixa_emp), ""))
+        ponte.append(("= Valor da empresa (cenário venda a mercado)", _mil(base["valor_empresa"] + caixa_emp), "sub"))
     if v.get("piso_patrimonial") is not None:
-        ponte.append(("Piso: liquidação dos ativos", _mil(v["piso_patrimonial"] + off_ativos),
-                      "vale este" if not do_fluxo else "fica abaixo"))
-    ponte.append(("= Ida a mercado recomendada", f"<b>{_mil(alvo)}</b>", "total"))
+        ponte.append(("Piso: liquidação dos ativos", _mil(v["piso_patrimonial"] + off_ativos), ""))
     ida_c = _ida(c)
-    if ida_c.get("forcada") and ida_c.get("maximo"):
-        ponte.append(("Faixa: mínimo a máximo", f"{_mil(ida_c['forcada']['bruto'])} a {_mil(ida_c['maximo']['bruto'])}",
-                      "conservador a otimista"))
+    if ida_c.get("mercado"):  # 11/11/2026: só a venda a mercado; os outros cenários estão em Cenários
+        ponte.append(("= Ida a mercado · venda a mercado", f"<b>{_mil(ida_c['mercado']['bruto'])}</b>", "total"))
+    else:
+        ponte.append(("Ida a mercado", _mil(v["preco_recomendado"] + off_fluxo), ""))
     pb = _payback_ida(c) if merc else v.get("payback_preco")
     if pb:
-        ponte.append(("Payback", f'{pb:.2f}'.replace(".", ",") + "&nbsp;anos",
-                      f"régua da casa: até {str(rp['maximo']['anos']).replace('.', ',')} anos" if rp.get("maximo") else ""))
+        ponte.append(("Payback (venda a mercado)", f'{pb:.2f}'.replace(".", ",") + "&nbsp;anos", ""))
     tab_preco = ('<table class="compacta">' + "".join(
-        f"<tr class='{'total' if obs == 'total' else ''}'><td>{escape(rot)}</td><td class='n'>{val}</td></tr>"
-        for rot, val, obs in ponte)  # sem coluna de observações (11/11/2026)
-        + '</table><div class="nota">R$ mil. Vale o fluxo de caixa no cenário base; a liquidação dos ativos só vale se '
-          'ficar acima dele. A proteção do comprador está no cenário conservador (taxa maior, sem crescimento) e na '
-          'régua da casa. Payback = anos de caixa para recuperar a ida a mercado, descontado o caixa que vem com a '
-          'empresa.</div>')
-    bloco_sens = bloco_sens or '<div class="nota nd">Não se aplica: sem caixa sustentável positivo.</div>'
-    # ordem do capítulo (11/11/2026): premissas → projeção → do valor à ida a mercado → cenários e sensibilidade →
-    # ativos da empresa → faixas por método → quanto vira o investimento → leitura do valuation (conclusão)
+        f"<tr class='{cls}'><td>{escape(rot)}</td><td class='n'>{val}</td></tr>" for rot, val, cls in ponte)
+        + '</table><div class="nota">R$ mil. Os cenários vêm do fluxo de caixa; a liquidação dos ativos é o piso e só '
+          'define o valor se ficar acima do fluxo. Payback = anos de caixa para recuperar a ida a mercado, descontado '
+          'o caixa que vem com a empresa'
+        + (f' (régua da casa: até {str(rp["maximo"]["anos"]).replace(".", ",")} anos)' if rp.get("maximo") else '')
+        + '.</div>')
+    # ordem do capítulo (11/11/2026): premissas → projeção → do valor à ida a mercado → cenários → ativos da
+    # empresa → faixas por método → quanto vira o investimento → leitura do valuation (conclusão)
     h.append(_secao("Do valor à ida a mercado", "valor", tab_preco))
+    sec_ativos = _secao("Ativos da empresa", "empresa", _bloco_ativos((c.get("financeiro") or {}).get("ativos")))
     if sem_caixa:
-        h.append(_secao("Sensibilidade", "relogio", bloco_sens))
-    else:
-        h += ['<div class="duas">', _secao("Cenários", "faixa", bloco_cen),
-              _secao("Sensibilidade", "relogio", bloco_sens), '</div>']
-    h.append(_secao("Ativos da empresa", "empresa", _bloco_ativos((c.get("financeiro") or {}).get("ativos"))))
+        h.append(sec_ativos)
+    else:  # lado a lado (11/11/2026)
+        h += ['<div class="duas">', _secao("Cenários", "faixa", bloco_cen), sec_ativos, '</div>']
     h.append(ff)
 
     # quanto vira o investimento, ano a ano
@@ -925,7 +942,7 @@ def cap6_transacao(c: dict) -> str:
             x = x.replace("**", "")
             if x.startswith("Pedido do vendedor") and merc_l and c.get("pedido_vendedor") and merc_l["bruto"] > 0:
                 x = (f"Pedido do vendedor: {g.brl_compacto(c['pedido_vendedor'])}, "
-                     f"{c['pedido_vendedor'] / merc_l['bruto']:.1f}× a ida a mercado recomendada".replace(".", ",")
+                     f"{c['pedido_vendedor'] / merc_l['bruto']:.1f}× a ida a mercado na venda a mercado".replace(".", ",")
                      + f" ({g.brl_compacto(merc_l['bruto'])}).")
             itens_f.append(x)
         leitura += _ul(itens_f)
@@ -936,33 +953,32 @@ def cap6_transacao(c: dict) -> str:
     me = tr.get("metodos") or {}
     # valor de ida a mercado × métodos  |  cenários de ida a mercado
     if merc:
-        itens = [("Ida a mercado", merc["bruto"], "recomendada", True)]
+        itens = []  # sem barra de valor recomendado (11/11/2026): só os métodos, todos em cinza
         if me.get("dcf") is not None:
-            itens.append(("Fluxo de caixa (DCF)", me["dcf"], "cenário base + caixa" + (" · vale" if me["vale"] == "DCF" else ""), False))
+            itens.append(("Fluxo de caixa (DCF)", me["dcf"], "venda a mercado + caixa" + (" · vale" if me["vale"] == "DCF" else ""), False))
         if me.get("liquidacao") is not None:
-            itens.append(("Liquidação", me["liquidacao"], "piso: venda forçada dos ativos" + (" · vale" if me["vale"] == "Liquidação" else ""), False))
+            itens.append(("Liquidação", me["liquidacao"], "liquidação ordenada dos ativos" + (" · vale" if me["vale"] == "Liquidação" else ""), False))
         if me.get("patrimonio") is not None:
             itens.append(("Ativos a mercado", me["patrimonio"], "referência de negociação", False))
         if me.get("estoque"):
             itens.append(("Estoque" + ("*" if "DEFIS" in (me.get("estoque_fonte") or "") else ""), me["estoque"],
                           f"a {me['haircut_estoque']:.0%} do valor contábil", False))
         nota_m = ("Valores brutos, antes de dívida e comissão, todos com o caixa da empresa dentro. Vale o fluxo de "
-                  "caixa (cenário base); a liquidação dos ativos é o piso. Ativos a mercado e estoque são só "
+                  "caixa (cenário venda a mercado); a liquidação dos ativos é o piso. Ativos a mercado e estoque são só "
                   "referência para a negociação: o caixa da empresa só existe porque eles estão operando, e eles só "
                   "rendem esse valor se a operação for encerrada. O valor de ida a mercado é o total que o comprador "
                   "paga: a parte do sócio mais as dívidas e obrigações da empresa que ele assume.")
         if me.get("estoque") and "DEFIS" in (me.get("estoque_fonte") or ""):
             nota_m += f" *Estoque da {me['estoque_fonte']} (o balanço não traz)."
         bloco_m = g.barras_valor(itens) + f'<div class="nota">{escape(nota_m)}</div>'
-        bloco_c = g.barras_valor([(x["nome"], x["bruto"], x["obs"].split(" · ")[0], x["chave"] == "mercado") for x in cen]) + (
-            '<div class="nota">Valor bruto de ida a mercado em cada cenário. Mínimo = venda forçada em 0 a 6 meses (cenário '
-            'conservador); recomendado = venda a mercado, em 6 a 18 meses; máximo = cenário otimista, para um '
-            'comprador estratégico.</div>')
+        bloco_c = g.barras_valor([(x["nome"], x["bruto"], x["obs"], False) for x in cen]) + (
+            '<div class="nota">Valor bruto de ida a mercado em cada cenário, sem recomendação: venda forçada em 0 a 6 '
+            'meses; venda a mercado em 6 a 18 meses; potencial máximo para um comprador estratégico.</div>')
         h += ['<div class="duas">', _secao("Valor de ida a mercado × métodos", "faixa", bloco_m),
               _secao("Cenários de ida a mercado", "valor", bloco_c), '</div>']
 
         # quanto sobra para o dono
-        dm = [i for i, x in enumerate(cen) if x["chave"] == "mercado"][0]
+        dm = None  # sem coluna destacada (11/11/2026): os três cenários com o mesmo peso
         cols = "".join(f"<th class='n'>{escape(x['nome'])}</th>" for x in cen)
         # descontos antes da parte do sócio (11/11/2026): comissão, fornecedores vencidos, bancários, tributários,
         # trabalhistas e rescisão (condicional, entre parênteses e fora da soma); sócios e prováveis quando houver
@@ -1056,7 +1072,7 @@ def cap6_transacao(c: dict) -> str:
             _linha_tab("Desembolso no fechamento (entrada + dívidas assumidas)", [_mil(x["desembolso"]) for x in es], "", ds),
             _linha_tab("Parcela ÷ caixa mensal da empresa", [_pct1(x["parcela_caixa"] * 100) if x["parcela_caixa"] else "—"
                                                            for x in es], "", ds),
-            _linha_tab("Retorno a.a. no cenário base (TIR)", [pct(x["tir"]) if x["tir"] is not None else ND for x in es],
+            _linha_tab("Retorno a.a. na venda a mercado (TIR)", [pct(x["tir"]) if x["tir"] is not None else ND for x in es],
                        "total", ds)]
         nota_p = (f"R$ mil. Valores da parte do sócio (a ida a mercado menos as dívidas que o comprador assume). "
                   f"Premissa: {pg['origem']} ({pg['entrada_aceita']:.0%} de entrada e {pg['prazo']} parcelas). "
@@ -1064,8 +1080,8 @@ def cap6_transacao(c: dict) -> str:
                   f"projetado ({g.brl_compacto(pg['caixa_mes'])}). Em valor de hoje o sócio recebe o mesmo nas três: "
                   "a negociação não muda, muda só quando o dinheiro chega.")
         if sug["earnout"]:
-            nota_p += (" O earn-out vai até o cenário otimista e não muda a TIR: só é pago com o caixa "
-                       "acima do cenário base.")
+            nota_p += (" O earn-out vai até o potencial máximo e não muda a TIR: só é pago com o caixa "
+                       "acima do cenário venda a mercado.")
         if es[1]["falta_na_entrada"]:
             nota_p += (f" Com {pg['entrada_aceita']:.0%} de entrada, a comissão e o escrow passam da entrada em "
                        f"{g.brl_compacto(es[1]['falta_na_entrada'])}: o restante sai das primeiras parcelas; a "
@@ -1082,7 +1098,7 @@ def cap6_transacao(c: dict) -> str:
         bc = g.brl_compacto
         passos = [f"<b>No dia da assinatura</b>, o comprador paga {bc(sug['entrada'])} "
                   f"({sug['entrada_pct']:.0%} da parte do sócio). Desse valor sai a comissão da Nova Direção "
-                  f"({bc(sug['comissao'])})" + (f" e {bc(sug['escrow'])} vão para a reserva de riscos (passo 4)"
+                  f"({bc(sug['comissao'])})" + (f" e {bc(sug['escrow'])} vão para a reserva de riscos (passo {4 if sug['n'] else 2})"
                                                 if sug["escrow"] else "")
                   + f", e o sócio fica com {bc(sug['no_fechamento'])}."
                   + (f" O comprador também assume as dívidas da empresa ({bc(div)})." if div > 0 else "")]
@@ -1107,11 +1123,11 @@ def cap6_transacao(c: dict) -> str:
         leit_cont = ((fin_c.get("leituras") or {}).get("Contingências") or {}).get("leitura")
         escrow_quali = not sug["escrow"] and nota_cont is not None and nota_cont < 4
         if escrow_quali:
-            passos.append("<b>Reserva de riscos (escrow), recomendada:</b> "
+            passos.append("<b>Reserva de riscos (escrow), sugerida:</b> "
                           + (f"há riscos citados ainda sem valor estimado ({escape(leit_cont[:1].lower() + leit_cont[1:].rstrip('.'))}). "
                              if leit_cont
                              else "há riscos citados ainda sem valor estimado. ")
-                          + "Recomendamos reservar parte do valor numa conta escrow, uma conta bancária vinculada que "
+                          + "Sugerimos reservar parte do valor numa conta escrow, uma conta bancária vinculada que "
                           "nenhum dos dois movimenta sozinho, com o valor definido na diligência. Se os riscos não se "
                           "confirmarem, o dinheiro é liberado ao sócio.")
         if sug["earnout"]:
@@ -1126,8 +1142,9 @@ def cap6_transacao(c: dict) -> str:
                   "receberia à vista)" + (f", mais até {bc(sug['earnout'])} se o lucro se confirmar" if sug["earnout"] else "")
                   + f". O comprador coloca {bc(sug['desembolso'])} no dia da assinatura (entrada + dívidas assumidas)"
                   + (f" e passa a ter o caixa de {bc(v['caixa'])} da empresa" if v.get("caixa") else "")
-                  + (f" e tem retorno estimado de {pct(sug['tir'])} ao ano no cenário base." if sug["tir"] is not None else "."))
-        abertura = (f'<p>A {escape(em)} vai a mercado por <b>{bc(merc["bruto"])}</b>. '
+                  + (f" e tem retorno estimado de {pct(sug['tir'])} ao ano no cenário venda a mercado." if sug["tir"] is not None else "."))
+        abertura = (f'<p>Simulação no cenário de venda a mercado, com ida a mercado de <b>{bc(merc["bruto"])}</b> '
+                    f'(a {escape(em)} pode fechar em qualquer ponto entre a venda forçada e o potencial máximo). '
                     + (f'Desse total, {bc(merc["bruto"] - merc["preco_cotas"])} ficam na empresa para quitar dívidas e '
                        f'obrigações, e <b>{bc(merc["preco_cotas"])}</b> vão ao sócio, em etapas:</p>'
                        if merc and merc["bruto"] - merc["preco_cotas"] > 1 else 'O valor vai ao sócio, em etapas:</p>')
@@ -1149,7 +1166,7 @@ def cap6_transacao(c: dict) -> str:
         crono = (g.cronograma_pagamento(sug["n"], sug["parcela"], pg["caixa_mes"], pg["limite"], sug["entrada"])
                  if sug["n"] else "")
         if crono:
-            leitura_g = [f"Barra cinza: o caixa que a empresa gera por mês no cenário base ({bc(pg['caixa_mes'])}).",
+            leitura_g = [f"Barra cinza: o caixa que a empresa gera por mês no cenário venda a mercado ({bc(pg['caixa_mes'])}).",
                          f"Barra laranja: a parcela paga ao sócio ({bc(sug['parcela'])}).",
                          f"Linha tracejada: o limite da casa, {pg['limite']:.0%} do caixa. Abaixo dela, a empresa paga "
                          "a própria compra e ainda sobra dinheiro para o dia a dia."]
@@ -1166,9 +1183,31 @@ CAPITULOS = {1: cap1_visao_geral, 2: cap2_empresa, 3: cap3_mercado, 4: cap4_fina
              6: cap6_transacao}
 
 
+AVALIACAO = [("Valor de ida a mercado", "Valor da empresa"), ("valor de ida a mercado", "valor da empresa"),
+             ("Ida a mercado recomendada", "Valor da empresa recomendado"),
+             ("ida a mercado recomendada", "valor da empresa recomendado"),
+             ("Do valor à ida a mercado", "Do fluxo ao valor da empresa"), ("Ida a mercado", "Valor da empresa"),
+             ("ida a mercado", "valor da empresa"), ("Desembolso do comprador", "Valor investido"),
+             (" Antes da comissão da ND.", ""), ("o total que o comprador paga pela empresa, somando o que vai ao sócio "
+              "e as dívidas e obrigações da empresa que ele assume", "o valor das cotas somado às dívidas e obrigações "
+              "da empresa (valor da firma)")]
+
+
+def sem_linguagem_de_venda(html: str) -> str:
+    """Valuation independente: o número é o valor da empresa, não um preço de ida a mercado com comissão."""
+    for velho, novo in AVALIACAO:
+        html = html.replace(velho, novo)
+    return html
+
+
 def montar_html(c: dict, capitulos: list[int] | None = None) -> str:
     """`c` é o contexto montado por tarantino.relatorio; `capitulos` permite gerar só alguns (prévia)."""
-    corpo = (capa(c) if capitulos is None else "") + "".join(CAPITULOS[n](c) for n in (capitulos or sorted(CAPITULOS)))
+    caps = capitulos or sorted(CAPITULOS)
+    if c.get("tipo_finalidade") == "avaliacao":  # 11/11/2026 (Emunah): sem decisão de venda → sem capítulo 6
+        caps = [n for n in caps if n != 6]
+    corpo = (capa(c) if capitulos is None else "") + "".join(CAPITULOS[n](c) for n in caps)
+    if c.get("tipo_finalidade") == "avaliacao":
+        corpo = sem_linguagem_de_venda(corpo)
     css = CSS.replace("__LOGO__", _logo_cabecalho())
     return ("<!doctype html><html lang='pt-BR'><head><meta charset='utf-8'><title>Valuation — "
             f"{escape(c['empresa'])}</title><style>{css}</style></head><body>{corpo}</body></html>")

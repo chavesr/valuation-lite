@@ -28,6 +28,23 @@ def carregar_parametros(caminho: str | Path = PARAMETROS) -> dict:
     return json.loads(Path(caminho).read_text(encoding="utf-8"))
 
 
+def parametros_do_case(dados, decisoes: dict | None, p: dict | None = None) -> dict:
+    """Decisão do analista (valuation_decisoes.json → imobilizado_laudo: {liquidacao, mercado, fonte}, 11/11/2026,
+    Emunah): imobilizado pelo laudo em vez dos % padrão. 'liquidacao' (liquidez forçada do laudo) entra no piso;
+    'mercado' (valor de mercado do laudo) nos ativos a mercado. Vira o % do imobilizado líquido do último balanço."""
+    import copy
+
+    p = copy.deepcopy(p or carregar_parametros())
+    laudo = (decisoes or {}).get("imobilizado_laudo") or {}
+    bp = max((b for b in dados.balancos if b.data_base), key=lambda b: b.data_base, default=None)
+    imob = bp.imobilizado_liquido if bp else None
+    if laudo and imob:
+        for chave, criterio in (("liquidacao", "piso_patrimonial"), ("mercado", "patrimonio_mercado")):
+            if laudo.get(chave) is not None:
+                p[criterio]["imobilizado"] = laudo[chave] / imob
+    return p
+
+
 Classificacao = Literal["provavel", "possivel", "remota"]
 
 
@@ -101,6 +118,7 @@ class ResultadoValuation(BaseModel):
     multiplo_ebitda: dict[str, float] = Field(default_factory=dict)
     cenarios: list[Cenario] = Field(default_factory=list)
     sensibilidade: dict[str, dict[str, float]] = Field(default_factory=dict)  # taxa → crescimento → patrimônio
+    recuperacao_margem: dict | None = None  # cenários de recuperação de margem (margens_recuperacao)
     preco_recomendado: float = 0.0
     taxa_provisoria: dict[str, float] | None = None  # faixa da taxa se as notas pendentes forem 5 (melhor) ou 1 (pior)
     alertas: list[str] = Field(default_factory=list)
@@ -245,8 +263,42 @@ def teste_perpetuidade(dados, notas: dict[str, NotaDimensao], risco: ResultadoRi
     return (not falhas), ("aprovado" if not falhas else "reprovado: " + ", ".join(falhas))
 
 
-def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpetuidade: bool, g_perp: float) -> tuple[list[float], float, float]:
-    fluxos = [round(fluxo * (1 + g) ** t, 2) for t in range(1, anos + 1)]
+def margens_recuperacao(dres: list[DREEconomica], decisao: dict | None, p: dict) -> dict | None:
+    """Cenarização de recuperação de margem (11/11/2026, Emunah). valuation_decisoes.json → recuperacao_margem:
+    {"de": período de partida (o realizado mais recente), "alvo": período cuja margem é a meta (o melhor ano
+    recente), "fracao_base": quanto do caminho o cenário base recupera, "anos": em quantos anos}.
+    Margem = caixa do dono ÷ receita bruta. Conservador fica na margem de partida, otimista chega à meta.
+    → {"de", "alvo", "anos", "margens": {conservador, base, otimista, partida, meta}} ou None."""
+    if not decisao or not decisao.get("de") or not decisao.get("alvo"):
+        return None
+    por_nome = {d.periodo: d for d in dres}
+    ini, fim = por_nome.get(decisao["de"]), por_nome.get(decisao["alvo"])
+    if not ini or not fim:
+        raise ValueError(f"recuperacao_margem: períodos {decisao['de']} / {decisao['alvo']} não existem na "
+                         f"normalização ({', '.join(por_nome)})")
+
+    def margem(d):
+        rb = d.valor("Receita bruta")
+        oe = d.owner_earnings if d.owner_earnings is not None else d.lucro_economico
+        return oe / rb if rb else 0.0
+
+    pr = p.get("recuperacao_margem", {})
+    frac = decisao.get("fracao_base", pr.get("fracao_base", 0.5))
+    m0, m1 = margem(ini), margem(fim)
+    return {"de": decisao["de"], "alvo": decisao["alvo"], "anos": int(decisao.get("anos", pr.get("anos", 3))),
+            "margens": {"partida": round(m0, 4), "meta": round(m1, 4), "conservador": round(m0, 4),
+                        "base": round(m0 + frac * (m1 - m0), 4), "otimista": round(m1, 4)}}
+
+
+def fluxos_recuperacao(receita: float, g: float, anos: int, m0: float, alvo: float, anos_rec: int) -> list[float]:
+    """Caixa de cada ano: receita crescendo a g × margem que sai de m0 e chega ao alvo em linha reta em anos_rec."""
+    return [round(receita * (1 + g) ** t * (m0 + (alvo - m0) * min(t / max(anos_rec, 1), 1.0)), 2)
+            for t in range(1, anos + 1)]
+
+
+def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpetuidade: bool, g_perp: float,
+         fluxos: list[float] | None = None) -> tuple[list[float], float, float]:
+    fluxos = fluxos or [round(fluxo * (1 + g) ** t, 2) for t in range(1, anos + 1)]
     vp = sum(f / (1 + taxa) ** t for t, f in enumerate(fluxos, start=1))
     if perpetuidade and taxa > g_perp:
         terminal = fluxos[-1] * (1 + g_perp) / (taxa - g_perp)
@@ -257,7 +309,8 @@ def _dcf(fluxo: float, taxa: float, g: float, anos: int, terminal: float, perpet
 def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: dict[str, NotaDimensao],
             p: dict | None = None, decisoes_contingencias: dict | None = None,
             piso_escolhido: str = "liquidacao", crescimento_informado: dict | None = None,
-            fornecedores_vencidos: float | None = None) -> ResultadoValuation:
+            fornecedores_vencidos: float | None = None, recuperacao: dict | None = None) -> ResultadoValuation:
+    """`recuperacao`: saída de margens_recuperacao (cenários com a margem voltando ao melhor ano recente)."""
     p = p or carregar_parametros()
     base, fluxo, fonte = lucro_sustentavel(dres, p)
     hist = crescimento_historico(dres)
@@ -298,17 +351,24 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
                            piso_usado="mercado" if piso is not None and piso == piso_merc and piso_escolhido == "mercado"
                            else "liquidacao",
                            retencao_sugerida=round(sum(c.retencao for c in conts), 2),
-                           divida_componentes=componentes, passivos_desconto=pdesc)
+                           divida_componentes=componentes, passivos_desconto=pdesc, recuperacao_margem=recuperacao)
     ativos_liquidos = liquidacao_operacional or 0.0  # valor terminal (firma) no cenário base/otimista
     mult_vt = p["valor_terminal"]["multiplo_do_fluxo"]
     sinal = 1 if fluxo > 0 else -1  # com fluxo negativo, taxa maior daria valor menos negativo: inverte
     for nome, dtaxa, g in (("conservador", sinal * t["conservador"], cr["conservador"]),
                            ("base", 0.0, g_base), ("otimista", sinal * t["otimista"], g_otim)):
         taxa = round(min(max(risco.taxa_desconto + dtaxa, TAXA_MIN), TAXA_MAX), 4)
-        fluxo_final = fluxo * (1 + g) ** risco.horizonte_anos
+        proj = None
+        if recuperacao:  # a margem sai do realizado e volta em direção ao melhor ano (11/11/2026)
+            mg = recuperacao["margens"]
+            proj = fluxos_recuperacao(base.valor("Receita bruta"), g, risco.horizonte_anos, mg["partida"], mg[nome],
+                                      recuperacao["anos"])
+            fluxo_final = proj[-1]
+        else:
+            fluxo_final = fluxo * (1 + g) ** risco.horizonte_anos
         terminal = max(mult_vt[nome] * fluxo_final, ativos_liquidos)  # empresa em funcionamento ou liquidação
         fluxos, vt, ev = _dcf(fluxo, taxa, g, risco.horizonte_anos, terminal, perp and nome != "conservador",
-                              cr["perpetuidade"])
+                              cr["perpetuidade"], proj)
         r.cenarios.append(Cenario(nome=nome, taxa=taxa, crescimento=g, anos=risco.horizonte_anos, fluxos=fluxos,
                                   valor_terminal=vt, valor_empresa=ev, valor_patrimonio=round(ev + ajuste_patrimonio, 2),
                                   multiplo_do_fluxo=round(ev / fluxo, 2) if fluxo > 0 else 0.0))
@@ -323,8 +383,14 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     for taxa in sorted({round(min(max(risco.taxa_desconto + dt, TAXA_MIN), TAXA_MAX), 4) for dt in (-0.03, 0.0, 0.03)}):
         r.sensibilidade[f"{taxa:.0%}"] = {}
         for g in sorted({0.0, g_base, g_otim}):
-            terminal = max(mult_vt["base"] * fluxo * (1 + g) ** risco.horizonte_anos, ativos_liquidos)
-            _, _, ev = _dcf(fluxo, taxa, g, risco.horizonte_anos, terminal, perp, cr["perpetuidade"])
+            proj = None
+            if recuperacao:
+                mg = recuperacao["margens"]
+                proj = fluxos_recuperacao(base.valor("Receita bruta"), g, risco.horizonte_anos, mg["partida"],
+                                          mg["base"], recuperacao["anos"])
+            final = proj[-1] if proj else fluxo * (1 + g) ** risco.horizonte_anos
+            terminal = max(mult_vt["base"] * final, ativos_liquidos)
+            _, _, ev = _dcf(fluxo, taxa, g, risco.horizonte_anos, terminal, perp, cr["perpetuidade"], proj)
             r.sensibilidade[f"{taxa:.0%}"][f"{g:.0%}"] = round(ev + ajuste_patrimonio, 2)
 
     valor_base = max(base_c.valor_patrimonio, piso or float("-inf")) if piso is not None else base_c.valor_patrimonio
@@ -370,13 +436,35 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     if r.retencao_sugerida:
         r.ponte_dono.append(("(retido no fechamento até a contingência possível prescrever)", -r.retencao_sugerida))
 
-    # faixa de venda (decisão de 07/11/2026): forçada = conservador, mercado = preço recomendado (base com margem),
-    # máximo = otimista — sempre progressivos (a margem não pode jogar o preço abaixo da forçada nem acima do máximo)
-    cons_v, otim_v = r.cenarios[0].valor_patrimonio, r.cenarios[2].valor_patrimonio
-    # opção A (10/11/2026): a faixa são os próprios cenários — mínimo = conservador (nunca abaixo da liquidação
-    # ordenada), recomendado = base (ou o piso), máximo = otimista
-    r.faixa_venda = {"forcada": round(max(min(max(cons_v, piso_liq if piso_liq is not None else cons_v),
-                                              r.preco_recomendado), 0.0), 2),
+    # venda forçada (decisão de 11/11/2026): sempre uma fração fixa (60%) da ida a mercado da venda a mercado, sem
+    # piso de liquidação; a taxa do cenário passa a ser a implícita nesse valor (não mais a do Score + 3 p.p.)
+    fr = (p.get("venda_forcada") or {}).get("fracao_do_mercado", 0.6)
+    off_ida = bruta + provaveis + pd_total  # da parte do sócio ao valor de ida a mercado (base única)
+    ida_forcada = round(fr * r.valor_oferta, 2)
+    alvo_ev = ida_forcada - caixa
+    if fluxo > 0 and alvo_ev > 0:
+        # taxa implícita sobre o MESMO fluxo da venda a mercado: o retorno de quem compra a 60% (com recuperação de
+        # margem, o fluxo sem crescimento pode nem alcançar os 60%, por isso não se usa o fluxo do conservador)
+        c1 = r.base
+        proj1 = (fluxos_recuperacao(base.valor("Receita bruta"), c1.crescimento, risco.horizonte_anos,
+                                    recuperacao["margens"]["partida"], recuperacao["margens"]["base"],
+                                    recuperacao["anos"]) if recuperacao else None)
+        final1 = proj1[-1] if proj1 else fluxo * (1 + c1.crescimento) ** risco.horizonte_anos
+        terminal1 = max(mult_vt["base"] * final1, ativos_liquidos)
+        ev_de = lambda tx: _dcf(fluxo, tx, c1.crescimento, risco.horizonte_anos, terminal1, perp,  # noqa: E731
+                                cr["perpetuidade"], proj1)
+        lo, hi = 0.0001, 10.0
+        for _ in range(200):  # o valor cai com a taxa: bissecção
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if ev_de(mid)[2] > alvo_ev else (lo, mid)
+        taxa_imp = round((lo + hi) / 2, 4)
+        fluxos0, vt0, _ = ev_de(taxa_imp)
+        r.cenarios[0] = Cenario(nome="conservador", taxa=taxa_imp, crescimento=c1.crescimento, anos=c1.anos,
+                                fluxos=fluxos0, valor_terminal=vt0, valor_empresa=round(alvo_ev, 2),
+                                valor_patrimonio=round(alvo_ev + ajuste_patrimonio, 2),
+                                multiplo_do_fluxo=round(alvo_ev / fluxo, 2))
+    otim_v = r.cenarios[2].valor_patrimonio
+    r.faixa_venda = {"forcada": round(ida_forcada - off_ida, 2),
                      "mercado": r.preco_recomendado,
                      "maximo": round(max(otim_v, r.preco_recomendado), 2)}
 

@@ -162,4 +162,6 @@ def test_projecao_dre_fecha_com_o_motor():
     assert rot["= EBITDA econômico"][0] == 200e3 and abs(rot["= EBITDA econômico"][1] - 210e3) < 0.01
     assert rot["(±) Ajuste à média dos períodos"][0] == -30e3 and pj["tem_acerto"]
     assert "(−) Impostos sobre o lucro" not in rot  # oe = ebitda − capex
-    assert projecao_dre([d], {**v, "fluxo_base": -1}, 2026) is None
+    # 11/11/2026: a projeção aparece sempre, mesmo com caixa negativo (o preço vem do piso)
+    assert projecao_dre([d], {**v, "fluxo_base": -1}, 2026) is not None
+    assert projecao_dre([d], {**v, "fluxo_base": 0}, 2026) is None

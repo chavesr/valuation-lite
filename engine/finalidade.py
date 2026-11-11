@@ -14,9 +14,10 @@ from pydantic import BaseModel, Field
 
 from captacao.util import brl
 
-Tipo = Literal["venda_total", "venda_parcial", "entrada_socio"]
-NOMES = {"venda_total": "venda total", "venda_parcial": "venda parcial", "entrada_socio": "entrada de sócio"}
-LEIA = ("tipo: venda_total | venda_parcial | entrada_socio · percentual: fração das cotas negociadas (0,30 = 30%) · "
+Tipo = Literal["venda_total", "venda_parcial", "entrada_socio", "avaliacao"]
+NOMES = {"venda_total": "venda total", "venda_parcial": "venda parcial", "entrada_socio": "entrada de sócio",
+         "avaliacao": "valuation independente (sem decisão de venda)"}
+LEIA = ("tipo: venda_total | venda_parcial | entrada_socio | avaliacao (valuation independente, sem decisão de venda: o relatório mostra o valor da empresa, sem ida a mercado nem comissão) · percentual: fração das cotas negociadas (0,30 = 30%) · "
         "aporte: dinheiro novo que entra na empresa (entrada de sócio), em R$ · pedido_vendedor: quanto o dono pede "
         "pela participação, em R$ · entrada_aceita / prazo_aceito_meses / aceita_earnout: forma de pagamento que o "
         "sócio aceita (reuniões; vazio = premissa ND de 25% + 24 meses) · custo_cotas: custo de aquisição das cotas "

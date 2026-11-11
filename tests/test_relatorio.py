@@ -47,6 +47,19 @@ def _case(tmp_path, graves=False):
     return pasta
 
 
+def _registrar_leitura(pasta):
+    from tarantino.leitura import documentos
+    (pasta / "_valuation" / "leitura.json").write_text(json.dumps(
+        {"arquivos": {d: {"resumo": "lido no teste"} for d in documentos(pasta)}}), encoding="utf-8")
+
+
+def test_sem_leitura_integral_bloqueia(tmp_path):
+    pasta = _case(tmp_path)
+    rodar_f7(pasta, executor=lambda p, modelo=None: json.dumps(_revisao(graves=False)))
+    with pytest.raises(RelatorioBloqueado, match="sem leitura registrada"):
+        gerar_relatorio(pasta, executor=lambda p, modelo=None: json.dumps(TEXTOS), pdf=False)
+
+
 def test_sem_revisao_ou_com_grave_pendente_bloqueia(tmp_path):
     pasta = _case(tmp_path)
     with pytest.raises(RelatorioBloqueado, match="revisar"):
@@ -59,6 +72,7 @@ def test_sem_revisao_ou_com_grave_pendente_bloqueia(tmp_path):
 def test_gera_html_com_os_seis_capitulos_e_reaproveita_textos(tmp_path):
     pasta = _case(tmp_path)
     rodar_f7(pasta, executor=lambda p, modelo=None: json.dumps(_revisao(graves=False)))
+    _registrar_leitura(pasta)
     chamadas = []
 
     def redator(prompt, modelo=None):
@@ -79,6 +93,7 @@ def test_gera_html_com_os_seis_capitulos_e_reaproveita_textos(tmp_path):
 def test_textos_fora_do_formato_sao_rejeitados(tmp_path):
     pasta = _case(tmp_path)
     rodar_f7(pasta, executor=lambda p, modelo=None: json.dumps(_revisao(graves=False)))
+    _registrar_leitura(pasta)
     with pytest.raises(ValidationError):
         gerar_relatorio(pasta, executor=lambda p, modelo=None: json.dumps({**TEXTOS, "por_que_olhar": []}), pdf=False)
 
@@ -107,3 +122,16 @@ def test_evolucao_do_investimento_e_tir():
     assert e["ipca_mais"][-1] == pytest.approx(100 * (1.04 * 1.06) ** 3, abs=0.01)
     caixa = (30 * 1.1 + 30) * 1.1 + 30  # caixa reinvestido na Selic
     assert e["empresa"][-1] == pytest.approx(caixa + 100, abs=0.01)  # + valor terminal no último ano
+
+
+def test_ativos_so_ativo_e_valor_de_mercado():
+    """11/11/2026: a tabela de ativos tem só Ativo | Valor (venda a mercado); bem fora da venda não soma."""
+    from relatorio.render import _bloco_ativos
+    at = {"linhas": [{"nome": "Imóveis", "valor": 2_000_000.0, "fora": True},
+                     {"nome": "Veículos", "valor": 40_000.0, "fora": False},
+                     {"nome": "Máquinas e equipamentos", "valor": None, "fora": False}],
+          "total": 40_000.0, "piso": 1_600_000.0, "fonte": None}
+    html = _bloco_ativos(at)
+    assert "<th>Ativo</th><th class=\"n\">Valor</th></tr>" in html
+    assert "Contábil" not in html and "Realização" not in html
+    assert "(fora da venda)" in html and "n/d" in html.lower()

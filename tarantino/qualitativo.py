@@ -130,6 +130,10 @@ def montar_entrada(pasta_empresa: str | Path, excluir_referencia: str | None = N
         p += ["", "## Relatórios do ERP (resumo)", _json(dados.erp)]
     if dados.alertas:
         p += ["", "## Alertas da captação", *[f"- {a}" for a in dados.alertas[:40]]]
+    from tarantino.leitura import resumos
+    lidos = resumos(pasta)
+    if lidos:
+        p += ["", lidos]
 
     if dados.entrevistas:
         p += ["", "## Entrevistas e briefings com o dono (relato — declarado, não comprovado)", "",
