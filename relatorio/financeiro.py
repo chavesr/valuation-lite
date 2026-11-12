@@ -153,12 +153,14 @@ def receita_mensal(dados, meses: int = 24) -> dict | None:
     serie, fonte = _receita_declarada_mensal(dados)
     if not serie:
         serie, fonte = _receita_gerencial_mensal(dados), "gerencial"
-    serie = {k: v for k, v in serie.items() if v}
+    fim = getattr(dados, "periodo_fim", None)  # 12/11/2026 (Emunah): só até o fim do período analisado
+    serie = {k: v for k, v in serie.items() if v and (not fim or k <= fim)}
     if len(serie) < 6:
         return None
     chaves = sorted(serie)[-meses:]
     nomes = {"PGDAS-D": "declarações do Simples Nacional", "gerencial": FONTE_EMPRESA}
-    return {"meses": chaves, "valores": [serie[k] for k in chaves], "fonte": nomes.get(fonte, "documentos fiscais")}
+    padrao = FONTE_EMPRESA if "briefing" in (fonte or "").lower() else "documentos fiscais"  # declarado pelos sócios
+    return {"meses": chaves, "valores": [serie[k] for k in chaves], "fonte": nomes.get(fonte, padrao)}
 
 
 # --------------------------------------------------------------------------- ponte contábil → econômico
@@ -427,6 +429,11 @@ def ativos_empresa(dados, ativos: dict | None, p: dict, rescisao: float | None =
         if valor is None and contabil is not None:
             valor = contabil * hm.get(chave if chave in ("estoques", "contas_receber") else "imobilizado", 1.0)
         linhas.append({"nome": nome, "valor": valor, "fora": bool(it.get("fora_da_venda"))})
+    # 12/11/2026 (Emunah): bens fora das categorias padrão (ex.: consórcios em andamento) entram com "nome" próprio
+    for chave, it in itens.items():
+        if chave not in dict(ATIVOS) and isinstance(it, dict) and it.get("nome"):
+            linhas.append({"nome": it["nome"], "valor": it.get("valor_mercado", it.get("valor_contabil")),
+                           "fora": bool(it.get("fora_da_venda"))})
     pt = ponte_liquidacao(bp, p.get("piso_patrimonial") or {}, rescisao)
     return {"linhas": linhas, "total": sum(x["valor"] for x in linhas if x["valor"] is not None and not x["fora"]),
             "fonte": (ativos or {}).get("fonte"), "piso": pt["piso"] if pt else None,
@@ -518,35 +525,52 @@ def projecao_dre(dres: list[dict], v: dict, ano0: int) -> dict | None:
         return sum(l["valor"] for l in d["linhas"] if l["conta"] == nome)
 
     rb, trib, cmv = conta("Receita bruta"), conta("Tributos sobre a receita"), conta("Custo das vendas")
+    desc = conta("Descontos concedidos")  # 12/11/2026 (Emunah): descontos da planilha gerencial, linha própria
     pes, adm = conta("Despesas com pessoal"), conta("Despesas administrativas e comerciais")
     aj = sum(a["valor"] for a in d.get("ajustes", []) if a["status"] in ("aplicado", "aprovado"))
     ebitda = d["ebitda"]
-    outros = ebitda - (rb + trib + cmv + pes + adm + aj)
+    outros = ebitda - (rb + desc + trib + cmv + pes + adm + aj)
     capex = -(d.get("capex_manutencao") or 0)
     oe = d["owner_earnings"] if d.get("owner_earnings") is not None else d.get("lucro_economico", 0.0)
     ir = oe - ebitda - capex
     acerto = fluxo - oe
     g, taxa, n = base_c["crescimento"], base_c["taxa"], len(base_c["fluxos"])
 
-    modelo = [("Receita bruta", rb, ""), ("(−) Tributos sobre a receita", trib, ""), ("(−) Custo das vendas", cmv, ""),
-              ("= Lucro bruto", rb + trib + cmv, "sub"), ("(−) Despesas com pessoal", pes, ""),
+    modelo = [("Receita bruta", rb, ""), ("(−) Descontos concedidos", desc, ""),
+              ("(−) Tributos sobre a receita", trib, ""), ("(−) Custo das vendas", cmv, ""),
+              ("= Lucro bruto", rb + desc + trib + cmv, "sub"), ("(−) Despesas com pessoal", pes, ""),
               ("(−) Despesas administrativas e comerciais", adm, ""),
               ("(−) Ajustes de normalização", aj, ""), ("(±) Outros", outros, ""),
               ("= EBITDA econômico", ebitda, "sub"), ("(−) Investimento de manutenção", capex, ""),
               ("(−) Impostos sobre o lucro", ir, ""), ("= Caixa do dono no período", oe, "sub"),
               ("(±) Ajuste à média dos períodos", acerto, "")]
+    serie = {rot: [val] + [val * (1 + g) ** t for t in range(1, n + 1)] for rot, val, _ in modelo}
+    rec = v.get("recuperacao_margem")
+    if rec:
+        # 12/11/2026 (Emunah): a recuperação de margem entra DENTRO da DRE, não numa linha à parte. O ganho de caixa
+        # de cada ano (fluxo do motor − margem constante) vira redução das despesas de pessoal e administrativas, na
+        # proporção de cada uma; os impostos sobre o lucro sobem na alíquota efetiva do ano-base (IR/EBITDA), por isso
+        # o ganho é bruto desse imposto. Caixa do dono, EBITDA e margem passam a subir ano a ano.
+        aliq = min(max(-ir / ebitda, 0.0), 0.34) if ebitda > 0 else 0.0
+        ganho = [0.0] + [f_ - (oe + acerto) * (1 + g) ** t for t, f_ in enumerate(base_c["fluxos"], start=1)]
+        bruto = [x / (1 - aliq) for x in ganho]
+        desp = pes + adm
+        for rot, peso in (("(−) Despesas com pessoal", pes / desp if desp else 0.5),
+                          ("(−) Despesas administrativas e comerciais", adm / desp if desp else 0.5)):
+            serie[rot] = [s + b * peso for s, b in zip(serie[rot], bruto)]
+        serie["(−) Impostos sobre o lucro"] = [s - (b - x) for s, b, x in zip(serie["(−) Impostos sobre o lucro"], bruto, ganho)]
+        for rot in ("= EBITDA econômico",):
+            serie[rot] = [s + b for s, b in zip(serie[rot], bruto)]
+        serie["= Caixa do dono no período"] = [s + x for s, x in zip(serie["= Caixa do dono no período"], ganho)]
     linhas = []
     for rot, val, cls in modelo:
-        if cls == "" and abs(val) < 1000:
+        if cls == "" and max(abs(x) for x in serie[rot]) < 1000:
             continue
-        linhas.append((rot, [val] + [val * (1 + g) ** t for t in range(1, n + 1)] + [None], cls))
+        linhas.append((rot, serie[rot] + [None], cls))
         if rot == "= EBITDA econômico":
-            linhas.append(("Margem EBITDA", [ebitda / rb * 100 if rb else None] * (n + 1) + [None], "margem"))
-    rec = v.get("recuperacao_margem")
-    if rec:  # 11/11/2026: a margem volta em direção ao melhor ano — diferença para a margem constante, ano a ano
-        constante = [(oe + acerto) * (1 + g) ** t for t in range(1, n + 1)]
-        linhas.append((f"(+) Recuperação de margem (rumo a {rec['alvo']})",
-                       [0.0] + [f_ - c_ for f_, c_ in zip(base_c["fluxos"], constante)] + [None], ""))
+            linhas.append(("Margem EBITDA", [e / (rb * (1 + g) ** t) * 100 if rb else None
+                                             for t, e in enumerate(serie[rot])] + [None], "margem"))
+    if rec:
         linhas.append(("Margem do caixa do dono", [rec["margens"]["partida"] * 100]
                        + [f_ / (rb * (1 + g) ** t) * 100 if rb else None
                           for t, f_ in enumerate(base_c["fluxos"], start=1)] + [None], "margem"))

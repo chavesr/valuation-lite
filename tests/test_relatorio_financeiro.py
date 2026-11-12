@@ -165,3 +165,25 @@ def test_projecao_dre_fecha_com_o_motor():
     # 11/11/2026: a projeção aparece sempre, mesmo com caixa negativo (o preço vem do piso)
     assert projecao_dre([d], {**v, "fluxo_base": -1}, 2026) is not None
     assert projecao_dre([d], {**v, "fluxo_base": 0}, 2026) is None
+
+
+def test_projecao_recuperacao_de_margem_dentro_da_dre():
+    """12/11/2026 (Emunah): sem linha 'Recuperação de margem' — o ganho reduz pessoal e administrativas, o IR sobe na
+    alíquota do ano-base, e EBITDA, margem e caixa do dono sobem ano a ano fechando com os fluxos do motor."""
+    from relatorio.financeiro import projecao_dre
+    linhas = [("Receita bruta", 1000e3), ("Tributos sobre a receita", -100e3), ("Custo das vendas", -500e3),
+              ("Despesas com pessoal", -300e3), ("Despesas administrativas e comerciais", -60e3)]
+    d = {"periodo": "LTM", "linhas": [{"conta": k, "valor": v} for k, v in linhas], "ajustes": [],
+         "ebitda": 40e3, "capex_manutencao": 0, "owner_earnings": 30e3}  # IR 10 mil = 25% do EBITDA
+    fluxos = [50e3, 70e3, 90e3]
+    v = {"periodo_base": "LTM", "fluxo_base": 30e3, "recuperacao_margem": {"alvo": "2025", "margens": {"partida": 0.03}},
+         "cenarios": [{"nome": "base", "crescimento": 0.0, "taxa": 0.25, "fluxos": fluxos, "valor_terminal": 200e3,
+                       "valor_empresa": 300e3}]}
+    rot = {r: vals for r, vals, _ in projecao_dre([d], v, 2026)["linhas"]}
+    assert not any(r.startswith("(+) Recuperação") for r in rot)
+    assert [round(x) for x in rot["= Caixa do dono no período"][1:4]] == [50e3, 70e3, 90e3]
+    assert round(rot["= EBITDA econômico"][1]) == round(40e3 + 20e3 / 0.75)
+    assert round(rot["(−) Impostos sobre o lucro"][1]) == round(-10e3 - (20e3 / 0.75 - 20e3))
+    ganho_desp = rot["(−) Despesas com pessoal"][1] + 300e3 + rot["(−) Despesas administrativas e comerciais"][1] + 60e3
+    assert round(ganho_desp) == round(20e3 / 0.75)
+    assert rot["Margem EBITDA"][3] > rot["Margem EBITDA"][1] > rot["Margem EBITDA"][0]

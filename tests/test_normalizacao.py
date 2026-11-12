@@ -89,3 +89,63 @@ def test_dre_sem_cmv_e_checkpoint_do_analista():
     assert aj.status == "proposto" and aj.valor == 60_000
     (_, aprovado) = normalizar(dc, decisoes={"despesas_pessoais": {"aprovado": True, "valor": 48_000}})
     assert aprovado.ebitda == pytest.approx(ano.ebitda + 48_000)
+
+
+def test_receita_gerencial_aprovada_pelo_analista_sem_caixa():
+    """11/11/2026 (Intermoldes): sem extratos, a DRE gerencial só vira receita se o analista aprovar no case."""
+    d = _dados(dre=True)
+    d.pgdas = []
+    ger = DREAnual(cnpj="1", exercicio=2025, receita_bruta=2_400_000, custo_vendas=-1_000_000,
+                   despesas_administrativas=-300_000, despesas_pessoal=-150_000, pro_labore=-60_000,
+                   depreciacao_amortizacao=-20_000, proveniencia=PROV)
+    object.__setattr__(d, "dres_gerenciais", [ger])  # campo do DadosCase (tarantino), lido via getattr no motor
+    p = carregar_parametros()
+    (sem,) = normalizar(d, parametros=p)
+    assert sem.receita_fonte == "DRE contábil" and sem.valor("Receita bruta") == 1_200_000
+    p["receita_gerencial_aprovada"] = {"motivo": "venda sem nota declarada pelo sócio"}
+    (com,) = normalizar(d, parametros=p)
+    assert com.receita_fonte.startswith("gerencial aprovada") and com.valor("Receita bruta") == 2_400_000
+    assert com.valor("Custo das vendas") == -1_000_000  # custos da própria DRE gerencial
+    assert any("sem nota declarada" in a for a in com.alertas)
+    assert any("contingência" in a for a in com.alertas)
+
+
+def _gerencial(meses, receita=100_000.0, desconto=-20_000.0):
+    from captacao.parsers.gerencial_xlsx import Categoria as CG, DREGerencial, LinhaGerencial
+    linhas = [LinhaGerencial(rotulo=r, categoria=c, origem="mapa", valores={m: v for m in meses})
+              for r, c, v in (("Receitas", CG.RECEITA_OPERACIONAL, receita), ("Descontos", CG.DESCONTOS, desconto),
+                              ("Folha", CG.DESPESA_PESSOAL, -30_000.0), ("Custos", CG.CUSTO_VARIAVEL, -10_000.0))]
+    return DREGerencial(linhas=linhas, competencias=list(meses), proveniencia=PROV)
+
+
+def test_descontos_concedidos_linha_propria_fora_da_base_dos_tributos():
+    """12/11/2026 (Emunah): receita bruta = entradas declaradas; descontos em linha própria, fora da base dos tributos
+    sobre a receita, e o alerta de receita acima da declarada compara a receita líquida dos descontos."""
+    meses = [f"2025-{m:02d}" for m in range(1, 13)]
+    d = _dados(dre=True)
+    d.pgdas = []
+    object.__setattr__(d, "gerenciais", [_gerencial(meses)])
+    p = carregar_parametros()
+    p["receita_gerencial_aprovada"] = {"motivo": "declarado no briefing"}
+    sem_desc = _dados(dre=True)
+    sem_desc.pgdas = []
+    object.__setattr__(sem_desc, "gerenciais", [_gerencial(meses, receita=80_000.0, desconto=0.0)])
+    ltm = normalizar(d, parametros=p)[0]
+    ref = normalizar(sem_desc, parametros=p)[0]
+    assert ltm.valor("Receita bruta") == 1_200_000 and ltm.valor("Descontos concedidos") == -240_000
+    assert ltm.valor("Tributos sobre a receita") == ref.valor("Tributos sobre a receita")  # base = 960 mil nos dois
+    assert [l.conta for l in ltm.linhas][:3] == ["Receita bruta", "Descontos concedidos", "Tributos sobre a receita"]
+    ano = next(x for x in normalizar(d, parametros=p) if x.periodo == "2025")
+    assert not any("acima da declarada" in a for a in ano.alertas)  # 960 mil líquidos < 1,2 mi contábil
+
+
+def test_ltm_termina_no_fim_escolhido_em_abrir():
+    """12/11/2026 (Emunah): 'abrir --fim' corta o LTM (ex.: tirar um mês parcial no fim da planilha)."""
+    meses = [f"2025-{m:02d}" for m in range(1, 13)] + ["2026-01", "2026-02"]
+    d = _dados(dre=False)
+    d.pgdas = []
+    object.__setattr__(d, "gerenciais", [_gerencial(meses)])
+    d.periodo_fim = "2026-02"
+    assert periodos(d)[0][0] == "LTM 2025-03 a 2026-02"
+    d.periodo_fim = "2025-12"
+    assert periodos(d)[0][0] == "LTM 2025-01 a 2025-12"

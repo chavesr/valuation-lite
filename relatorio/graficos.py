@@ -298,7 +298,16 @@ def _tspans(x: float, y: float, linhas: list[str], tam: float, cor: str, ancora:
 def linha_do_tempo(eventos: list[tuple[int, str]]) -> str:
     """Marcos em ordem de ano, alternando acima e abaixo da linha; o mais recente em laranja."""
     eventos = sorted(eventos)[:8]
-    L, A, esq, dir_, cy = 540, 168, 62, 62, 84
+    # 12/11/2026 (Emunah): o marco nunca é cortado. Até 4 linhas na fonte normal; com 5, fonte menor e mais altura
+    quebras = [_quebrar(ev, 24) for _, ev in eventos]
+    max_l = max((len(q) for q in quebras), default=1)
+    tam, larg = (8.2, 24) if max_l <= 4 else (7.4, 27)
+    if max_l > 4:
+        quebras = [_quebrar(ev, larg) for _, ev in eventos]
+        max_l = max(len(q) for q in quebras)
+    passo_l = tam * 1.25
+    folga = max(0, max_l - 3) * passo_l  # cada linha além de 3 empurra o texto de cima e o de baixo
+    L, A, esq, dir_, cy = 540, round(168 + 2 * folga), 62, 62, round(84 + folga)
     n = len(eventos)
     passo = (L - esq - dir_) / max(n - 1, 1)
     c = [f'<line x1="{esq - 20}" x2="{L - dir_ + 20}" y1="{cy}" y2="{cy}" stroke="{CINZA}" stroke-width="2"/>']
@@ -308,14 +317,14 @@ def linha_do_tempo(eventos: list[tuple[int, str]]) -> str:
         cima = i % 2 == 0
         c.append(f'<line x1="{x:.1f}" x2="{x:.1f}" y1="{cy}" y2="{cy - 14 if cima else cy + 14}" stroke="{CINZA}" stroke-width="1"/>')
         c.append(f'<circle cx="{x:.1f}" cy="{cy}" r="5" fill="{LARANJA if ultimo else TINTA}" stroke="{PAPEL}" stroke-width="2"/>')
-        linhas = _cortar(ev, 24, 3)
+        linhas = quebras[i]
         if cima:
-            y0 = cy - 24 - 10.5 * len(linhas)
+            y0 = cy - 24 - passo_l * len(linhas)
             c.append(_tspans(x, y0 - 3, [str(ano)], 9.5, TINTA, peso=700))
-            c.append(_tspans(x, y0 + 9, linhas, 8.2, TINTA_SUAVE))
+            c.append(_tspans(x, y0 + 9, linhas, tam, TINTA_SUAVE))
         else:
             c.append(_tspans(x, cy + 30, [str(ano)], 9.5, TINTA, peso=700))
-            c.append(_tspans(x, cy + 42, linhas, 8.2, TINTA_SUAVE))
+            c.append(_tspans(x, cy + 42, linhas, tam, TINTA_SUAVE))
     return _svg(L, A, "".join(c), "Linha do tempo da empresa")
 
 

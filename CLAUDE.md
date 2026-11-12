@@ -10,7 +10,9 @@ no Drive (pasta original do case, incluindo subpastas) e na cópia local:
 - todas as abas de todas as planilhas, de cima a baixo;
 - Word, apresentações, imagens (fotos de WhatsApp, organogramas) e os relatórios gerenciais de anos anteriores;
 - DREs e balanços contábeis **sempre** entram no relatório (histórico, DRE simplificado, balanço), mesmo quando o
-  valuation usa o gerencial — nunca escreva "não informado" para algo que está na pasta.
+  valuation usa o gerencial — nunca escreva "não informado" para algo que está na pasta. Exceção (12/11, Emunah):
+  quando o contábil não conversa com o real e a DRE do relatório é a gerencial declarada, a DRE contábil fica fora do
+  relatório (confunde) e vai ao investidor só a pedido — mas continua lida e registrada em leitura.json.
 
 Registre cada leitura em `_valuation/leitura.json` (formato em `tarantino/leitura.py`): o resumo do que o documento
 traz e onde entra no relatório. `python -m tarantino relatorio` **recusa** gerar o relatório enquanto houver
@@ -29,3 +31,5 @@ errados porque parte da pasta não foi lida — o usuário teve de apontar os er
 - Testes: `PYTHONDONTWRITEBYTECODE=1 <venv python> -m pytest -q -p no:cacheprovider`.
 - Nunca rodar o tarantino direto na pasta do cliente no Drive: copiar para o scratchpad.
 - Links de arquivo para o usuário: caminho sem espaços.
+- Ao finalizar uma versão de relatório, abrir o PDF no Chrome sem esperar pedido:
+  `Start-Process "C:\Program Files\Google\Chrome\Application\chrome.exe" "<pdf>"` (só a versão final, não rodadas intermediárias).

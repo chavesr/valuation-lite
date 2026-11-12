@@ -769,7 +769,9 @@ def captar(pasta: Path, inventario: list[Arquivo], fim: str | None = None, meses
     for e in efds:  # estabelecimentos do SPED entram no grupo (ex.: filial)
         entidades.setdefault(e.cnpj, e.nome)
     lidos_dre, lidos_bp = [], []
-    docs_gerenciais, dres_gerenciais, docs_contabeis = [], [], {}
+    # DRE gerencial digitada pelo analista (11/11/2026, Intermoldes: operação com a receita sem nota estimada)
+    docs_gerenciais, docs_contabeis = [], {}
+    dres_gerenciais = [DREAnual.model_validate(d) for d in manual.get("dres_gerenciais", [])]
     for a in [a for a in ativos if a.tipo == Tipo.DEMONSTRACAO]:
         try:
             doc = ler_demonstracao(pasta / a.caminho)
@@ -789,8 +791,12 @@ def captar(pasta: Path, inventario: list[Arquivo], fim: str | None = None, meses
             docs_contabeis[(doc.cnpj, doc.data_fim)] = doc
         lidos_dre += doc.dres
         lidos_bp += doc.balancos
-    dres += _consolidar(lidos_dre, "dre", alertas)
-    balancos += _consolidar(lidos_bp, "balanco", alertas)
+    # o digitado à mão prevalece (11/11/2026, WM): exercício com DRE/balanço na entrada manual não recebe a versão do
+    # parser — a manual é a reclassificada pelo analista e somar as duas contaria o ano em dobro
+    anos_dre = {(d.exercicio, d.meses) for d in dres}
+    datas_bp = {b.data_base for b in balancos}
+    dres += [d for d in _consolidar(lidos_dre, "dre", alertas) if (d.exercicio, d.meses) not in anos_dre]
+    balancos += [b for b in _consolidar(lidos_bp, "balanco", alertas) if b.data_base not in datas_bp]
     for g in docs_gerenciais:
         contabil = docs_contabeis.get((g.cnpj, g.data_fim))
         if contabil:

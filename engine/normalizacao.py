@@ -216,6 +216,10 @@ def periodos(dados) -> list[tuple[str, list[str]]]:
     mensal = {**_receita_gerencial_mensal(dados), **_receita_declarada_mensal(dados)[0]}
     if mensal:
         fim = max(mensal)
+        # 12/11/2026 (Emunah): o LTM termina no fim do período escolhido em 'abrir --fim' (ex.: tirar um mês parcial)
+        pf = getattr(dados, "periodo_fim", None)
+        if pf and pf < fim:
+            fim = pf
         ano, m = map(int, fim.split("-"))
         total = ano * 12 + m - 12
         inicio = f"{total // 12:04d}-{total % 12 + 1:02d}"
@@ -269,6 +273,14 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
         else:
             alertas.append(f"Receita gerencial R$ {brl(ger, 0)} acima da declarada R$ {brl(base, 0)} sem confirmação "
                            "pelo caixa: mantida a declarada (a gerencial fica como sensibilidade).")
+    # 11/11/2026 (Intermoldes): sem extratos, o analista pode aprovar a receita gerencial (ex.: venda sem nota
+    # informada pelo sócio e cruzada com o faturamento citado) — parametros_case.json: receita_gerencial_aprovada
+    aprov = p.get("receita_gerencial_aprovada")
+    if aprov and ger and base and ger > base * (1 + rel) and not fonte_receita.startswith("gerencial"):
+        alertas[:] = [a for a in alertas if not a.startswith("Receita gerencial")]
+        receita, fonte_receita = ger, "gerencial aprovada pelo analista (sem extratos)"
+        alertas.append(f"Receita gerencial R$ {brl(ger, 0)} aprovada pelo analista sem confirmação pelo caixa "
+                       f"({aprov.get('motivo', 'sem motivo registrado')}); a declarada é R$ {brl(base, 0)}.")
     if caixa and base and caixa > (receita or 0) * (1 + rel) and fonte_receita != "gerencial confirmada pelo caixa":
         receita, fonte_receita = caixa, "caixa (receita acima da declarada comprovada nos extratos)"
     if receita is None and caixa:
@@ -287,7 +299,16 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
             d.linhas.append(Linha(conta=conta, valor=round(valor, 2), fonte=fonte))
 
     linha("Receita bruta", receita, fonte_receita)
-    regime, trib, ircs = _carga_comprador(receita_anual, atividade, dados, p)  # Presumido é revisto no fim
+    # descontos concedidos da planilha gerencial (12/11/2026, Emunah): só quando a receita é a gerencial; saem da
+    # receita antes dos tributos (desconto incondicional não é base de ISS/PIS/COFINS)
+    descontos = 0.0
+    if fonte_receita.startswith("gerencial"):
+        for g in getattr(dados, "gerenciais", None) or []:
+            serie = g.por_categoria().get("descontos", {})
+            descontos += sum(serie.get(m, 0.0) for m in meses)
+    linha("Descontos concedidos", -abs(descontos), "DRE gerencial (planilha)")
+    base_trib = receita_anual - abs(descontos) * fator
+    regime, trib, ircs = _carga_comprador(base_trib, atividade, dados, p)  # Presumido é revisto no fim
 
     # ---- custos e despesas
     # custos da MESMA fonte da receita quando ela é gerencial (misturar receita gerencial com custo contábil infla
@@ -424,8 +445,9 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
         sum(a.valor for a in d.ajustes if a.status in ("aplicado", "aprovado")) + da
     if regime == "Lucro Presumido":
         cmv = d.valor("Custo das vendas")
-        outras = sum(l.valor for l in d.linhas if l.conta not in ("Receita bruta", "Custo das vendas"))
-        real_trib, real_ircs = _lucro_real(receita_anual, cmv * fator, outras * fator, (receita + antes) * fator,
+        outras = sum(l.valor for l in d.linhas
+                     if l.conta not in ("Receita bruta", "Descontos concedidos", "Custo das vendas"))
+        real_trib, real_ircs = _lucro_real(base_trib, cmv * fator, outras * fator, (receita + antes) * fator,
                                            atividade, p)
         presumido_total, real_total = trib + ircs, real_trib + real_ircs
         d.alertas.append(f"Regime do comprador: Lucro Presumido R$ {brl(presumido_total, 0)}/ano × Lucro Real "
@@ -434,7 +456,7 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
         if real_total < presumido_total:
             regime, trib, ircs = "Lucro Real", real_trib, real_ircs
     d.regime_comprador = regime
-    d.linhas.insert(1, Linha(conta="Tributos sobre a receita", valor=round(-trib / fator, 2),
+    d.linhas.insert(2 if descontos else 1, Linha(conta="Tributos sobre a receita", valor=round(-trib / fator, 2),
                              fonte=f"recalculado no regime do comprador ({regime})"))
 
     # ---- resultado
@@ -470,8 +492,11 @@ def normalizar_periodo(dados, nome: str, meses: list[str], decisoes: dict, p: di
     if any(a.status == "proposto" for a in d.ajustes):
         d.alertas.append(f"{sum(a.status == 'proposto' for a in d.ajustes)} ajuste(s) de julgamento aguardando o "
                          "analista (Checkpoint 2): não entram no resultado até serem aprovados.")
-    if "caixa" in fonte_receita and receitas["declarada"]:
-        d.alertas.append(f"Receita econômica acima da declarada em R$ {brl(receita - receitas['declarada'], 0)}: tratar "
+    declarada = receitas["declarada"] or (receitas["contabil"] if fonte_receita.startswith("gerencial aprovada") else None)
+    # 12/11/2026 (Emunah): compara a receita líquida dos descontos concedidos (a declarada/contábil já vem líquida)
+    excesso = (receita - abs(descontos) - declarada) if declarada else 0.0
+    if ("caixa" in fonte_receita or fonte_receita.startswith("gerencial aprovada")) and declarada and excesso > 0:
+        d.alertas.append(f"Receita econômica acima da declarada em R$ {brl(excesso, 0)}: tratar "
                          "o passivo fiscal da receita não declarada como contingência no valuation.")
     if fonte_receita.startswith(("caixa", "gerencial (sem")) or (estrutura is None and not gerenciais):
         d.confianca = "baixa"

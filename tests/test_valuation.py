@@ -260,3 +260,25 @@ def test_rescisao_ate_a_venda_desconta_e_substitui_o_trabalhista_do_balanco():
     cen = cenarios_dono(com.model_dump(), dados, None, {**PADRAO, **carregar_parametros()})
     m = next(x for x in cen if x["chave"] == "mercado")
     assert m["rescisao"] == 90_000 and m["provaveis_trabalhistas"] == 30_000 and m["provaveis"] == 30_000
+
+
+def test_venda_forcada_pelos_ativos_nao_vira_taxa_implicita():
+    """12/11/2026 (Emunah): com a venda a mercado vindo do piso de ativos, 60% dela pode ficar acima do fluxo. A venda
+    forçada NÃO pode virar uma taxa implícita menor que a da venda a mercado (dava 7,2% contra 24,9%): os cenários do
+    fluxo ficam em ordem (forçada ≤ mercado ≤ máximo) e a forçada continua 60% da venda a mercado."""
+    import datetime
+    dados = _dados()
+    dados.balancos = [BalancoAnual(cnpj="1", exercicio=2025, data_base=datetime.date(2025, 12, 31),
+                                   caixa_aplicacoes=100_000, contas_receber=200_000, estoques=9_000_000,
+                                   imobilizado_liquido=100_000, fornecedores=150_000, emprestimos_lp=400_000,
+                                   proveniencia=PROV)]
+    dres = normalizar(dados)
+    notas = propor_notas(dados, None, dres, dres[0])
+    r = avaliar(dados, dres, None, avaliar_risco({k: v.nota for k, v in notas.items()}, selic=0.1094), notas)
+    cons, base_c, otim = r.cenarios
+    assert r.valor_oferta_origem.startswith("liquidação") and r.forcada_origem == "ativos"
+    assert cons.valor_empresa == pytest.approx(0.6 * base_c.valor_empresa, abs=1)  # 60% da operação ao lado
+    assert cons.taxa > base_c.taxa >= otim.taxa
+    assert cons.valor_empresa <= base_c.valor_empresa <= otim.valor_empresa
+    off = r.valor_oferta - r.preco_recomendado
+    assert r.faixa_venda["forcada"] + off == pytest.approx(0.6 * r.valor_oferta, abs=1)

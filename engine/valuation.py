@@ -112,6 +112,9 @@ class ResultadoValuation(BaseModel):
     piso_patrimonial: float | None = None  # ativos em liquidação ordenada − passivos (venda forçada)
     patrimonio_mercado: float | None = None  # ativos a valor de mercado − passivos (critério da ND)
     piso_usado: str = "liquidacao"  # qual dos dois serve de piso do preço (escolha do analista por case)
+    # 12/11/2026 (Emunah): "fluxo" = venda forçada pela taxa implícita no fluxo; "ativos" = a venda a mercado vem do
+    # piso de ativos e a forçada é 60% dela — sem taxa implícita (daria taxa abaixo da Selic e valor acima do fluxo)
+    forcada_origem: str = "fluxo"
     ativos_mercado: float | None = None  # ativos brutos a mercado, sem descontar passivos (critério da ND)
     valor_oferta: float | None = None  # maior entre valor da empresa (DCF base) e ativos a mercado
     valor_oferta_origem: str | None = None  # "fluxo (DCF)" ou "ativos a mercado"
@@ -464,6 +467,12 @@ def avaliar(dados, dres: list[DREEconomica], gci, risco: ResultadoRisco, notas: 
     off_ida = bruta + provaveis + pd_total  # da parte do sócio ao valor de ida a mercado (base única)
     ida_forcada = round(fr * r.valor_oferta, 2)
     alvo_ev = ida_forcada - caixa
+    if do_piso_liq:
+        # 12/11/2026 (Emunah, regra do Guilherme): com a venda a mercado vindo dos ativos, o VALOR DA OPERAÇÃO da venda
+        # forçada é SEMPRE 60% do valor da operação da venda a mercado (coluna ao lado), com a taxa implícita nesse
+        # valor; o valor da empresa da forçada continua 60% do valor da venda a mercado (ativos)
+        r.forcada_origem = "ativos"
+        alvo_ev = round(fr * r.base.valor_empresa, 2)
     if fluxo > 0 and alvo_ev > 0:
         # taxa implícita sobre o MESMO fluxo da venda a mercado: o retorno de quem compra a 60% (com recuperação de
         # margem, o fluxo sem crescimento pode nem alcançar os 60%, por isso não se usa o fluxo do conservador)

@@ -1,4 +1,4 @@
-"""F8 — relatório: trava pela revisão, textos validados, números conferidos e HTML com os 6 capítulos."""
+"""F8 — relatório: trava pela revisão, textos validados, números conferidos e HTML com os 5 capítulos."""
 
 import json
 
@@ -69,7 +69,7 @@ def test_sem_revisao_ou_com_grave_pendente_bloqueia(tmp_path):
         gerar_relatorio(pasta, executor=lambda p, modelo=None: json.dumps(TEXTOS), pdf=False)
 
 
-def test_gera_html_com_os_seis_capitulos_e_reaproveita_textos(tmp_path):
+def test_gera_html_com_os_cinco_capitulos_e_reaproveita_textos(tmp_path):
     pasta = _case(tmp_path)
     rodar_f7(pasta, executor=lambda p, modelo=None: json.dumps(_revisao(graves=False)))
     _registrar_leitura(pasta)
@@ -82,8 +82,9 @@ def test_gera_html_com_os_seis_capitulos_e_reaproveita_textos(tmp_path):
     r = gerar_relatorio(pasta, executor=redator, pdf=False)
     html = r["html"].read_text(encoding="utf-8")
     for cap in ("Visão geral", "Sobre a empresa", "Análise de mercado e setor",
-                "Análise financeira e riscos do negócio", "Valuation", "Ida a mercado"):
+                "Análise financeira e riscos do negócio", "Valuation"):
         assert cap in html
+    assert "Leitura do valuation" not in html and "Leitura da transação" not in html  # 12/11/2026: sem capítulo 6
     assert "Quanto vale" in html and "<svg" in html and "Marca regional consolidada." in html
     assert r["numeros_nao_conferidos"] == ["R$ 9.999.999"]  # número que não está no material
     gerar_relatorio(pasta, executor=redator, pdf=False)
@@ -134,4 +135,18 @@ def test_ativos_so_ativo_e_valor_de_mercado():
     html = _bloco_ativos(at)
     assert "<th>Ativo</th><th class=\"n\">Valor</th></tr>" in html
     assert "Contábil" not in html and "Realização" not in html
-    assert "(fora da venda)" in html and "n/d" in html.lower()
+    assert "(fora da venda)" in html and "Máquinas" not in html  # 12/11/2026: linha sem dado (n/d) não aparece
+
+
+def test_parte_dos_socios_no_capitulo_5_para_valuation_independente():
+    """12/11/2026 (Emunah): sem capítulo 6, o capítulo 5 mostra valor da empresa − dívida − rescisão por cenário."""
+    from relatorio.render import _bloco_parte_socios
+    cen = [{"chave": k, "nome": n, "bruto": b, "divida": 2_348_000.0, "rescisao": 406_000.0, "provaveis": 0.0,
+            "fornecedores_vencidos": 0.0, "preco_cotas": b - 2_754_000.0, "rescisao_base": "34 CLT"}
+           for k, n, b in (("forcada", "Venda forçada", 2_859_000.0), ("mercado", "Venda a mercado", 4_765_000.0),
+                           ("maximo", "Potencial máximo", 4_765_000.0))]
+    html = _bloco_parte_socios({"financeiro": {"transacao": {"cenarios": cen}}})
+    assert "Quanto fica para os sócios" in html and "Rescisão dos funcionários" in html and "Passivos bancários" in html
+    assert "2.011" in html and "105" in html and "Líquido para os sócios" in html
+    assert "Contingências prováveis" not in html  # linha opcional zerada não aparece
+    assert _bloco_parte_socios({"financeiro": {}}) is None

@@ -134,8 +134,16 @@ def fatos_compactos(pasta: Path) -> str:
                               f"{m['liquido_caixa'] / v['fluxo_base']:.2f} anos (régua da casa: até 3)".replace(".", ",", 1))
         me = tr.get("metodos") or {}
         linhas.append(f"- Origem da ida a mercado: {v.get('valor_oferta_origem') or '—'} · fluxo de caixa (venda a mercado + caixa) "
-                      f" {_r(me.get('dcf'))} · piso = liquidação dos ativos {_r(me.get('liquidacao'))}")
-        if me.get("patrimonio") is not None:
+                      f" {_r(me.get('dcf'))} · "
+                      + (f"piso = ativos a mercado {_r(me.get('patrimonio'))} · liquidação ordenada (venda rápida, só "
+                         f"referência) {_r(me.get('liquidacao'))}" if v.get("piso_usado") == "mercado"
+                         else f"piso = liquidação dos ativos {_r(me.get('liquidacao'))}"))
+        if me.get("patrimonio") is not None and v.get("piso_usado") == "mercado":  # 12/11/2026 (Emunah)
+            motivo = json.loads(_ler(saida / "valuation_decisoes.json") or "{}").get("piso_motivo")
+            linhas.append(f"- Ativos a mercado {_r(me['patrimonio'])}: por decisão do analista, são o PISO da venda a "
+                          "mercado (não só referência)" + (f" — {motivo}" if motivo else "")
+                          + ". Não escreva que os ativos a mercado não entram no valor")
+        elif me.get("patrimonio") is not None:
             linhas.append(f"- Ativos a mercado {_r(me['patrimonio'])}: só referência para a negociação (argumento do "
                           "vendedor), NÃO é valor da empresa — só se realizam se a operação for encerrada")
         sug = (tr.get("pagamento") or {}).get("estruturas", [None])[-1]
@@ -156,6 +164,15 @@ def fatos_compactos(pasta: Path) -> str:
                f"- Finalidade: {fin.descricao}" + (f" · pedido do vendedor {_r(fin.pedido_vendedor)}" if fin.pedido_vendedor else "")]
     for c in v.get("contingencias", []):
         linhas.append(f"- Contingência {c['classificacao']}: {c['descricao']} ({_r(c['valor_bruto'])})")
+    ind_dre = json.loads(_ler(saida / "indicadores_analista.json") or "{}").get("dre")
+    if ind_dre:  # 12/11/2026 (Emunah): DRE gerencial declarada é a base; a contábil não conversa com o resultado real
+        linhas.append("- ATENÇÃO: a DRE do relatório é a GERENCIAL declarada pela empresa (" + "; ".join(
+            f"{col}: receita {_r(ind_dre['linhas'][0][1][i])}, resultado da operação "
+            f"{_r(next(l for l in ind_dre['linhas'] if l[0].startswith('Resultado da operação'))[1][i])}, lucro "
+            f"declarado {_r(ind_dre['linhas'][-1][1][i])}" for i, col in enumerate(ind_dre["colunas"]))
+            + "). A DRE contábil NÃO conversa com o resultado real e aparece só como referência: não conte a história "
+            "da empresa pelo contábil (crescimento, superávit, lucro contábil) e não a use como leitura principal. "
+            "A receita bruta é a declarada, ANTES dos descontos concedidos, que entram como linha própria da DRE.")
     if fin.tipo == "avaliacao":
         linhas.append("- ATENÇÃO: valuation independente, SEM decisão de venda. Não fale em comprador, comissão da ND, "
                       "ida a mercado, preço pedido nem 'o dono teria de pôr dinheiro para vender': o número é o VALOR "
@@ -322,7 +339,13 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
     # receita, volume × preço), já no formato do relatório; prevalecem sobre a DRE contábil e a declaração da F5
     ind = json.loads(_ler(saida / "indicadores_analista.json") or "{}")
     ra_ind = ind.get("receita_anual")
-    financeiro = {"dre": calc_fin.tabela_dre(dre_c), "custos": ind.get("custos") or calc_fin.composicao_custos(dre_c),
+    # 12/11/2026 (Emunah): quando o contábil não conversa com o resultado real, o analista monta a DRE gerencial (como
+    # declarada) no formato de tabela_dre; ela vira a DRE do capítulo 4. A contábil fica FORA do relatório (confunde o
+    # leitor; vai ao investidor só a pedido) — decisão do usuário 12/11/2026
+    dre_ind = ind.get("dre")
+    financeiro = {"dre": dre_ind or calc_fin.tabela_dre(dre_c),
+                  "dre_contabil": None,
+                  "custos": ind.get("custos") or calc_fin.composicao_custos(dre_c),
                   "receita_anual": ([tuple(x) for x in ra_ind["serie"]] if ra_ind else calc_fin.receita_anual(dre_c)),
                   "receita_anual_fonte": (ra_ind or {}).get("fonte"), "mensal": calc_fin.receita_mensal(dados),
                   "parcial": next(({"rotulo": c_, "rb": a["rb"]} for c_, a in zip(dre_c["colunas"], dre_c["abertas"])
@@ -336,6 +359,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
                                      or calc_fin.linhas_receita_f5(qual)),
                   "operacional": (ind.get("operacional") or calc_fin.operacional_planilha(dados)
                                   or calc_fin.operacional_f5(qual)),
+                  "operacional_resumo": ind.get("operacional_resumo"),  # retrato atual sem série (12/11/2026)
+                  "declarado": ind.get("declarado_empresa"),  # receita/lucro declarados × contábil (12/11/2026)
                   "leituras": calc_fin.leituras_verticais(qual),
                   "transacao": calc_tr.montar(dados, v, fin, _param_valuation(dados, saida), dres),
                   "ativos": calc_fin.ativos_empresa(dados, json.loads(_ler(saida / "ativos.json") or "{}"),

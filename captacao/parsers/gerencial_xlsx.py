@@ -50,6 +50,9 @@ class Categoria(str, Enum):
     APORTE_SOCIO = "aporte_socio"
     RETIRADA_SOCIO = "retirada_socio"  # distribuição de lucros, retiradas
     NAO_OPERACIONAL_ENTRADA = "nao_operacional_entrada"
+    # descontos/abatimentos concedidos lançados como saída (12/11/2026, Emunah): a receita bruta fica igual às entradas
+    # declaradas e os descontos viram linha própria da DRE, fora da base dos tributos sobre a receita
+    DESCONTOS = "descontos"
     NAO_OPERACIONAL_SAIDA = "nao_operacional_saida"
     SUBTOTAL = "subtotal"  # resultado/total calculado pela própria planilha
     IGNORAR = "ignorar"  # %, médias, acumulados
@@ -58,7 +61,7 @@ class Categoria(str, Enum):
 
 ENTRADAS = {Categoria.RECEITA_OPERACIONAL, Categoria.RECEITA_FINANCEIRA, Categoria.VENDA_ATIVO,
             Categoria.EMPRESTIMO_RECEBIDO, Categoria.APORTE_SOCIO, Categoria.NAO_OPERACIONAL_ENTRADA}
-OPERACIONAIS = {Categoria.RECEITA_OPERACIONAL, Categoria.DEDUCOES, Categoria.CUSTO_VARIAVEL,
+OPERACIONAIS = {Categoria.RECEITA_OPERACIONAL, Categoria.DEDUCOES, Categoria.DESCONTOS, Categoria.CUSTO_VARIAVEL,
                 Categoria.DESPESA_PESSOAL, Categoria.PRO_LABORE, Categoria.DESPESA_ADMINISTRATIVA,
                 Categoria.DESPESA_COMERCIAL}
 SEM_VALOR = {Categoria.SUBTOTAL, Categoria.IGNORAR}

@@ -75,7 +75,8 @@ def metodos(dados, v: dict, pv: dict) -> dict:
     pdt = sum((v.get("passivos_desconto") or {}).values())
     liq = v["piso_patrimonial"] + bruta + prov + pdt if v.get("piso_patrimonial") is not None else None
     pat = v["patrimonio_mercado"] + bruta + prov + pdt if v.get("patrimonio_mercado") is not None else v.get("ativos_mercado")
-    vale = "Liquidação" if (v.get("valor_oferta_origem") or "").startswith(("liquidação", "ativos")) else "DCF"
+    origem = v.get("valor_oferta_origem") or ""  # 12/11/2026 (Emunah): piso a mercado → valem os ativos a mercado
+    vale = "Ativos a mercado" if origem.startswith("ativos") else "Liquidação" if origem.startswith("liquidação") else "DCF"
     return {"dcf": dcf, "liquidacao": liq, "patrimonio": pat, "estoque": est_merc,
             "estoque_fonte": fonte, "vale": vale, "haircut_estoque": pv["patrimonio_mercado"]["estoques"]}
 
@@ -125,6 +126,8 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
         preco_cotas = socio * pct
         ganho = preco_cotas - com - (custo or 0.0)
         ir = ir_ganho_capital(ganho, p["ir_ganho_capital"])
+        # valuation independente (12/11/2026, Emunah): IR sobre o ganho sem comissão da ND (não há venda intermediada)
+        ir_sem_com = ir_ganho_capital(preco_cotas - (custo or 0.0), p["ir_ganho_capital"])
         # o que o comprador põe de fato: com o valor vindo dos ativos, o caixa da empresa vem junto e volta para ele
         liquido_caixa = bruto - caixa
         out.append({"chave": chave, "nome": nome, "obs": obs, "bruto": bruto, "liquido_caixa": liquido_caixa,
@@ -133,7 +136,7 @@ def cenarios_dono(v: dict, dados, fin, p: dict) -> list[dict]:
                     "rescisao": pdesc.get("rescisao", 0.0), "rescisao_base": v.get("rescisao_base"),
                     "provaveis_trabalhistas": prov_trab,
                     "passivos": passivos, "provaveis": prov, "socio": socio, "percentual": pct, "preco_cotas": preco_cotas,
-                    "comissao": com, "ir": ir, "custo_informado": custo is not None, "credito_vendedor": credito,
+                    "comissao": com, "ir": ir, "ir_sem_comissao": ir_sem_com, "custo_informado": custo is not None, "credito_vendedor": credito,
                     "sobra": preco_cotas - com - ir + credito, "retencao": v.get("retencao_sugerida") or 0.0})
     return out
 
