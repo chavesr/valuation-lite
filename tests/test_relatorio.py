@@ -85,7 +85,10 @@ def test_gera_html_com_os_cinco_capitulos_e_reaproveita_textos(tmp_path):
                 "Análise financeira e riscos do negócio", "Valuation"):
         assert cap in html
     assert "Leitura do valuation" not in html and "Leitura da transação" not in html  # 12/11/2026: sem capítulo 6
-    assert "Quanto vale" in html and "<svg" in html and "Marca regional consolidada." in html
+    # 13/11/2026 (Vedis v17): sem "Quanto vale"; "Quanto vira o investimento" do cap. 1 virou "Rentabilidade"
+    assert "Quanto vale" not in html and "Rentabilidade" in html
+    assert "<svg" in html and "Marca regional consolidada." in html
+    assert "Tratamento" not in html and "Pedir ao vendedor" not in html and "régua da casa: até 3" not in html
     assert r["numeros_nao_conferidos"] == ["R$ 9.999.999"]  # número que não está no material
     gerar_relatorio(pasta, executor=redator, pdf=False)
     assert len(chamadas) == 1  # nada mudou: textos reaproveitados

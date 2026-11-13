@@ -263,17 +263,21 @@ class TextosRelatorio(BaseModel):
     """textos.json — saída da F8 (redator). Só texto: números e gráficos vêm do sistema."""
 
     case_id: str
-    tese: str = Field(min_length=40, max_length=450, description="2 a 3 frases: o que é a empresa e quanto vale, por quê")
-    por_que_olhar: list[Annotated[str, Field(max_length=170)]] = Field(
-        min_length=2, max_length=4, description="forças: até 4 itens de no máximo 2 linhas, com o número que prova")
-    o_que_pesa_contra: list[Annotated[str, Field(max_length=170)]] = Field(
-        min_length=2, max_length=4, description="fragilidades: até 4 itens de no máximo 2 linhas, com a ação que resolve")
+    tese: str = Field(min_length=40, max_length=450,
+                      description="2 a 3 frases: o que é a empresa (história, marca, canal, região) e o motivo da venda; sem valores")
+    por_que_olhar: list[Annotated[str, Field(max_length=180)]] = Field(
+        min_length=2, max_length=4, description="forças: até 4 itens de no máximo 2 linhas, **negrito** no que prova")
+    o_que_pesa_contra: list[Annotated[str, Field(max_length=180)]] = Field(
+        min_length=1, max_length=4, description="fragilidades financeiras e de operação: até 3 itens curtos, sem ação/solução")
     sobre_empresa: str = Field(min_length=80, max_length=700,
                                description="o negócio em 3 a 4 frases (linha do tempo, modelo e organograma são gráficos)")
     gestao_pessoas: str = Field(min_length=40, max_length=500, description="papel do dono, equipe, sucessão: 2 a 3 frases")
     mercado_setor: str = Field(min_length=80, max_length=700,
                                description="setor, concorrência e fosso em 3 a 4 frases (cadeia e mapa são gráficos)")
-    leitura_financeira: str = Field(min_length=80, max_length=1400, description="o que os números mostram e o que foi ajustado")
-    leitura_riscos: str = Field(min_length=60, max_length=1200, description="principais riscos e contingências")
+    leitura_financeira: str = Field(min_length=80, max_length=1400,
+                                    description="4 parágrafos (quebra de linha) com abertura em **negrito**: Base de "
+                                                "clientes, Receita, Margens, Dívidas e riscos; sem premissas do valuation")
+    leitura_riscos: str = Field(min_length=60, max_length=1200,
+                                description="parágrafos curtos (quebra de linha) com abertura em **negrito**; só diagnóstico, sem solução")
     leitura_valuation: str = Field(min_length=60, max_length=1200, description="como chegamos ao valor, em linguagem simples")
     estrutura_transacao: str = Field(min_length=60, max_length=1200, description="como a operação pode ser feita")

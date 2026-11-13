@@ -518,19 +518,32 @@ def mapa_posicionamento(concorrentes: list[dict], empresa: tuple[str, int, int] 
              'preço →</text>')
     c.append(f'<text x="10" y="{(topo + base) / 2:.1f}" font-size="7.6" fill="{MUTED}" text-anchor="middle" '
              f'transform="rotate(-90 10 {(topo + base) / 2:.1f})">especialização →</text>')
-    usados: dict[tuple[int, int], int] = {}
     pontos = [(k["nome"], k["preco"], k["especializacao"], False) for k in concorrentes[:6]]
     if empresa:
         pontos.append((empresa[0], empresa[1], empresa[2], True))
-    for nome, pr, es, eh in pontos:
-        k = usados.get((pr, es), 0)
-        usados[(pr, es)] = k + 1
-        px, py = x(pr) + k * 9, y(es) - k * 9  # afasta pontos repetidos
+    grupos: dict[tuple[int, int], list[int]] = {}
+    for i, (_, pr, es, _) in enumerate(pontos):
+        grupos.setdefault((pr, es), []).append(i)
+    for i, (nome, pr, es, eh) in enumerate(pontos):
+        membros = grupos[(pr, es)]
+        if len(membros) == 1:
+            px, py = x(pr), y(es)
+            rot = _cortar(nome, 18, 2)
+            dy = -9 - 9 * (len(rot) - 1) if es <= 1 else (14 if eh else 12)  # na borda de baixo, rótulo acima do ponto
+            texto = _tspans(px, py + dy, rot, 8.2 if eh else 7.2, TINTA, peso=700 if eh else 400)
+        else:
+            # 13/11/2026 (Vedis, comentário do usuário): pontos na mesma nota não se sobrepõem — coluna de pontos
+            # centrada na nota, um rótulo de 1 linha ao lado de cada um
+            passo = 20
+            k = membros.index(i)
+            px = x(pr)
+            py = min(max(y(es) + (k - (len(membros) - 1) / 2) * passo, topo + 8), base - 8)
+            direita = px < (esq + L - dir_) / 2 + 40
+            texto = _tspans(px + (9 if direita else -9), py + 2.6, _cortar(nome, 26, 1), 8.2 if eh else 7.2, TINTA,
+                            ancora="start" if direita else "end", peso=700 if eh else 400)
         c.append(f'<circle cx="{px:.1f}" cy="{py:.1f}" r="{6 if eh else 4.5}" fill="{LARANJA if eh else CINZA}" '
                  f'stroke="{PAPEL}" stroke-width="1.5"/>')
-        rot = _cortar(nome, 18, 2)
-        dy = -9 - 9 * (len(rot) - 1) if es <= 1 else (14 if eh else 12)  # na borda de baixo, rótulo acima do ponto
-        c.append(_tspans(px, py + dy, rot, 8.2 if eh else 7.2, TINTA, peso=700 if eh else 400))
+        c.append(texto)
     return _svg(L, A, "".join(c), "Mapa de posicionamento competitivo")
 
 
@@ -547,9 +560,11 @@ def colunas_serie(itens: list[tuple[str, float, str]], destaques: set[int] | Non
     """Colunas de uma série (cinza), destaque em laranja; `itens` = (rótulo do eixo, valor, texto extra no topo)."""
     destaques = destaques or set()
     n = max(len(itens), 1)
-    L, esq, dir_, topo, base = largura, 4, 4, 24, altura - 22
     vals = [v for _, v, _ in itens]
     vmin, vmax = min(0.0, *vals), max(0.0, *vals) or 1.0
+    # 13/11/2026 (Vedis, comentário do usuário): com valor negativo, o rótulo fica abaixo da barra — reserva espaço
+    # para ele não cair em cima do ano
+    L, esq, dir_, topo, base = largura, 4, 4, 24, altura - (34 if vmin < 0 else 22)
     y = lambda v: topo + (vmax - v) / ((vmax - vmin) or 1) * (base - topo)  # noqa: E731
     banda = (L - esq - dir_) / n
     w = min(26.0, banda * 0.62)
