@@ -13,3 +13,4 @@ market_data/painel/
 *.xlsx
 *.xls
 *.zip
+output/

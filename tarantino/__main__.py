@@ -160,7 +160,7 @@ def cmd_relatorio(args: argparse.Namespace) -> None:
 
     try:
         r = gerar_relatorio(args.pasta, modo=args.modo, modelo=args.modelo, forcar_textos=args.refazer_textos,
-                            pdf=not args.so_html)
+                            pdf=not args.so_html, docx=args.docx)
     except RelatorioBloqueado as erro:
         sys.exit(f"Relatório bloqueado: {erro}")
     except (ErroJulgamento, RuntimeError) as erro:
@@ -171,6 +171,8 @@ def cmd_relatorio(args: argparse.Namespace) -> None:
               f"Depois rode de novo: python -m tarantino relatorio \"{args.pasta}\" --modo manual")
         return
     print(f"Relatório: {r.get('pdf') or r['html']}")
+    if r.get("docx"):
+        print(f"Word (para o Google Docs): {r['docx']}")
     if r["numeros_nao_conferidos"]:
         print(f"⚠ Valores citados pelo redator que não estão no material: {', '.join(r['numeros_nao_conferidos'])} "
               "— conferir o texto (textos.json) antes de enviar.")
@@ -242,6 +244,7 @@ def main(argv: list[str] | None = None) -> None:
     rl.add_argument("--modelo", help="modelo do Claude Code (padrão: o da conta)")
     rl.add_argument("--refazer-textos", action="store_true", help="chama o redator mesmo se nada mudou")
     rl.add_argument("--so-html", action="store_true", help="gera só o relatorio.html (sem PDF)")
+    rl.add_argument("--docx", action="store_true", help="gera também o relatorio.docx (abre no Google Docs)")
     rl.set_defaults(func=cmd_relatorio)
     f = sub.add_parser("finalidade", help="D7: venda total/parcial ou entrada de sócio, % das cotas, aporte, pedido")
     f.add_argument("pasta")

@@ -382,7 +382,8 @@ def _contexto(pasta: Path, textos: TextosRelatorio) -> dict:
 
 
 def gerar_relatorio(pasta_empresa: str | Path, modo: str = "claude-code", modelo: str | None = None,
-                    executor=executar_claude_code, forcar_textos: bool = False, pdf: bool = True) -> dict:
+                    executor=executar_claude_code, forcar_textos: bool = False, pdf: bool = True,
+                    docx: bool = False) -> dict:
     """→ {"pdf"|"html"|"entrada": caminho, "numeros_nao_conferidos": [...]}. Levanta RelatorioBloqueado pela trava."""
     pasta = Path(pasta_empresa)
     saida = pasta / PASTA_SAIDA
@@ -397,8 +398,11 @@ def gerar_relatorio(pasta_empresa: str | Path, modo: str = "claude-code", modelo
         destino = saida / "relatorio.pdf"
         html_para_pdf(html, destino)
         out["pdf"] = destino
+    if docx:  # mesmo HTML → Word, para abrir/editar no Google Docs (13/11/2026)
+        from relatorio.documento import html_para_docx
+        out["docx"] = html_para_docx(html, saida / "relatorio.docx")
     estado = ler_estado(pasta)
-    estado.registrar("F8", "relatorio", f"relatório gerado ({'PDF' if pdf else 'HTML'})"
+    estado.registrar("F8", "relatorio", f"relatório gerado ({'PDF' if pdf else 'HTML'}{' + Word' if docx else ''})"
                      + (f"; {len(fora)} valor(es) citado(s) não conferido(s)" if fora else ""))
     (saida / "state.json").write_text(estado.model_dump_json(indent=2), encoding="utf-8")
     return out
